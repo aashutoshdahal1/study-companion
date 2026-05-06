@@ -5,7 +5,7 @@ import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
 import JSZip from "jszip";
 import { pdfjs } from "react-pdf";
-import { BookOpen, Download, FileDown, Layers, Loader2, PanelLeft, PanelRight } from "lucide-react";
+import { BookOpen, Download, FileDown, Layers, Loader2, PanelLeft, PanelRight, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -21,6 +21,7 @@ import { PptxViewer } from "@/components/PptxViewer";
 import { NotesEditor } from "@/components/NotesEditor";
 import { ChatAI } from "@/components/ChatAI";
 import { FlashcardViewer } from "@/components/FlashcardViewer";
+import { QuizViewer } from "@/components/QuizViewer";
 import { storage, type DocMeta, type Workspace } from "@/lib/storage";
 
 const ACTIVE_WORKSPACE_STORAGE_KEY = "study-companion.activeWorkspaceId";
@@ -318,6 +319,7 @@ function StudyApp() {
   }, [sidebarVisible]);
   const [chatVisible, setChatVisible] = useState(false);
   const [flashcardOpen, setFlashcardOpen] = useState(false);
+  const [quizOpen, setQuizOpen] = useState(false);
   const [lastPageText, setLastPageText] = useState("");
   const editorRef = useRef<{ insertPageTag: () => void } | null>(null);
 
@@ -821,6 +823,14 @@ function StudyApp() {
           >
             <Layers className="h-4 w-4 mr-1.5" /> Flashcards
           </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={!activeMeta}
+            onClick={() => setQuizOpen(true)}
+          >
+            <Sparkles className="h-4 w-4 mr-1.5" /> Quiz
+          </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="sm" disabled={!activeMeta}>
@@ -908,6 +918,15 @@ function StudyApp() {
         isOpen={flashcardOpen}
         onClose={() => setFlashcardOpen(false)}
         docId={activeId}
+        notesHtml={notesHtml}
+        pageText={lastPageText}
+        currentPage={page}
+      />
+
+      {/* Quiz Viewer */}
+      <QuizViewer
+        isOpen={quizOpen}
+        onClose={() => setQuizOpen(false)}
         notesHtml={notesHtml}
         pageText={lastPageText}
         currentPage={page}

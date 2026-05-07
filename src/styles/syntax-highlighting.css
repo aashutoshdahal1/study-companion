@@ -1,0 +1,338 @@
+/* Syntax highlighting styles for code blocks */
+.hljs {
+  display: block;
+  overflow-x: auto;
+  padding: 1em;
+  background: #1e1e1e;
+  color: #d4d4d4;
+}
+
+/* Base colors */
+.hljs-comment,
+.hljs-quote,
+.hljs-variable,
+.hljs-template-variable,
+.hljs-tag,
+.hljs-name,
+.hljs-selector-id,
+.hljs-selector-class,
+.hljs-regexp,
+.hljs-deletion {
+  color: #6a9955;
+}
+
+.hljs-built_in,
+.hljs-builtin-name,
+.hljs-literal,
+.hljs-type,
+.hljs-params,
+.hljs-meta,
+.hljs-link {
+  color: #569cd6;
+}
+
+.hljs-attribute {
+  color: #9cdcfe;
+}
+
+.hljs-string,
+.hljs-addition {
+  color: #ce9178;
+}
+
+.hljs-number,
+.hljs-symbol {
+  color: #b5cea8;
+}
+
+/* Language specific */
+.hljs-keyword {
+  color: #c586c0;
+  font-weight: bold;
+}
+
+.hljs-function .hljs-title {
+  color: #dcdcaa;
+}
+
+.hljs-title.class_,
+.hljs-title.class_.inherited__,
+.hljs-title.function_ {
+  color: #dcdcaa;
+}
+
+.hljs-attr {
+  color: #9cdcfe;
+}
+
+.hljs-variable.language_ {
+  color: #9cdcfe;
+}
+
+.hljs-subst {
+  color: #d4d4d4;
+}
+
+.hljs-formula {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.hljs-emphasis {
+  font-style: italic;
+}
+
+.hljs-strong {
+  font-weight: bold;
+}
+
+/* JavaScript specific */
+.hljs-javascript .hljs-number {
+  color: #b5cea8;
+}
+
+.hljs-javascript .hljs-literal {
+  color: #569cd6;
+}
+
+/* TypeScript specific */
+.hljs-typescript .hljs-built_in {
+  color: #569cd6;
+}
+
+.hljs-typescript .hljs-type {
+  color: #569cd6;
+}
+
+/* Python specific */
+.hljs-python .hljs-built_in {
+  color: #569cd6;
+}
+
+.hljs-python .hljs-keyword {
+  color: #c586c0;
+}
+
+.hljs-python .hljs-number {
+  color: #b5cea8;
+}
+
+/* CSS specific */
+.hljs-css .hljs-built_in {
+  color: #569cd6;
+}
+
+.hljs-css .hljs-attribute {
+  color: #9cdcfe;
+}
+
+/* HTML/XML specific */
+.hljs-xml .hljs-tag {
+  color: #569cd6;
+}
+
+.hljs-xml .hljs-name {
+  color: #569cd6;
+}
+
+.hljs-xml .hljs-attribute {
+  color: #9cdcfe;
+}
+
+/* JSON specific */
+.hljs-json .hljs-attr {
+  color: #9cdcfe;
+}
+
+.hljs-json .hljs-string {
+  color: #ce9178;
+}
+
+.hljs-json .hljs-number {
+  color: #b5cea8;
+}
+
+/* Markdown specific */
+.hljs-markdown .hljs-title {
+  color: #569cd6;
+  font-weight: bold;
+}
+
+.hljs-markdown .hljs-code {
+  color: #ce9178;
+  background: rgba(255, 255, 255, 0.1);
+  padding: 0.2em 0.4em;
+  border-radius: 3px;
+}
+
+.hljs-markdown .hljs-strong {
+  font-weight: bold;
+  color: #569cd6;
+}
+
+.hljs-markdown .hljs-emphasis {
+  font-style: italic;
+  color: #569cd6;
+}
+
+/* SQL specific */
+.hljs-sql .hljs-keyword {
+  color: #c586c0;
+  font-weight: bold;
+}
+
+.hljs-sql .hljs-built_in {
+  color: #569cd6;
+}
+
+.hljs-sql .hljs-number {
+  color: #b5cea8;
+}
+
+/* Bash/Shell specific */
+.hljs-bash .hljs-built_in {
+  color: #569cd6;
+}
+
+.hljs-bash .hljs-variable {
+  color: #9cdcfe;
+}
+
+.hljs-bash .hljs-literal {
+  color: #b5cea8;
+}
+
+/* Enhanced code block wrapper styles */
+.enhanced-code-block {
+  border-radius: 8px;
+  overflow: hidden;
+  margin: 1rem 0;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+.enhanced-code-block pre {
+  margin: 0;
+  padding: 0;
+  background: #1e1e1e;
+}
+
+.enhanced-code-block code {
+  background: transparent;
+  padding: 1rem;
+  font-family: 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #d4d4d4;
+  white-space: pre;
+  word-wrap: normal;
+  overflow-x: auto;
+}
+
+/* Language indicator styles */
+.code-language-indicator {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-family: monospace;
+  text-transform: uppercase;
+  backdrop-filter: blur(4px);
+}
+
+/* Copy button styles */
+.code-copy-button {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  backdrop-filter: blur(4px);
+}
+
+.code-copy-button:hover {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.code-copy-button:active {
+  transform: scale(0.95);
+}
+
+.code-copy-button.copied {
+  background: rgba(34, 197, 94, 0.8);
+  border-color: rgba(34, 197, 94, 0.9);
+}
+
+/* Inline code styles */
+.prose-notes code:not(pre code) {
+  background: rgba(110, 231, 183, 0.1);
+  color: #059669;
+  padding: 0.125rem 0.25rem;
+  border-radius: 0.25rem;
+  font-size: 0.875em;
+  font-family: 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace;
+  border: 1px solid rgba(110, 231, 183, 0.2);
+}
+
+/* Dark theme adjustments */
+.dark .prose-notes code:not(pre code) {
+  background: rgba(110, 231, 183, 0.15);
+  color: #34d399;
+  border-color: rgba(110, 231, 183, 0.3);
+}
+
+/* Light theme adjustments */
+.light .enhanced-code-block pre {
+  background: #f8f9fa;
+}
+
+.light .enhanced-code-block code {
+  color: #212529;
+}
+
+.light .code-language-indicator,
+.light .code-copy-button {
+  background: rgba(0, 0, 0, 0.1);
+  color: #212529;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .enhanced-code-block code {
+    font-size: 12px;
+    padding: 0.75rem;
+  }
+  
+  .code-language-indicator,
+  .code-copy-button {
+    font-size: 0.625rem;
+    padding: 0.1875rem 0.375rem;
+  }
+}
+
+/* Print styles */
+@media print {
+  .enhanced-code-block {
+    box-shadow: none;
+    border: 1px solid #ccc;
+  }
+  
+  .code-language-indicator,
+  .code-copy-button {
+    display: none;
+  }
+  
+  .enhanced-code-block code {
+    color: #000;
+    background: #fff;
+  }
+}

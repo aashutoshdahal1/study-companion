@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Send, Bot, User, Settings, X, Minimize2, Maximize2 } from "lucide-react";
+import { markdownToHtml } from "@/lib/utils";
 
 interface ChatMessage {
   id: string;
@@ -335,14 +336,7 @@ export function ChatAI({ isVisible, onToggle, onInsertToNotes }: ChatAIProps) {
     }
   };
 
-  const renderMarkdown = (text: string) => {
-    // Simple markdown rendering for basic formatting
-    return text
-      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-      .replace(/\*(.+?)\*/g, '<em>$1</em>')
-      .replace(/`(.+?)`/g, '<code class="bg-muted px-1 py-0.5 rounded text-sm">$1</code>')
-      .replace(/\n/g, '<br />');
-  };
+  const renderMarkdown = (text: string) => markdownToHtml(text);
 
   if (!isVisible) {
     return (
@@ -593,7 +587,7 @@ export function ChatAI({ isVisible, onToggle, onInsertToNotes }: ChatAIProps) {
                         </div>
                       )}
                       <div
-                        className="whitespace-pre-wrap"
+                        className="chat-md"
                         dangerouslySetInnerHTML={{ __html: renderMarkdown(message.content) }}
                       />
                     </div>

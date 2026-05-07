@@ -1,7 +1,8 @@
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Upload, FileText, Trash2, Folder, FolderOpen, ChevronDown, ChevronRight, Edit2, Check, X } from "lucide-react";
+import { Upload, FileText, Trash2, Folder, FolderOpen, ChevronDown, ChevronRight, Edit2, Check, X, FileDown, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import type { Workspace, DocMeta } from "@/lib/storage";
 import { CreateWorkspaceButton } from "@/components/WorkspaceDialog";
 
@@ -17,25 +18,30 @@ interface DocSidebarProps {
   onCreateWorkspace: (name: string) => Promise<void>;
   onUpdateWorkspace: (workspace: Workspace) => Promise<void>;
   onDeleteWorkspace: (id: string) => Promise<void>;
+  onExportPdf?: (docId: string) => void;
+  onConvertPptxToPdf?: (docId: string) => Promise<void>;
 }
 
-export function DocSidebar({ 
-  workspaces, 
-  docs, 
-  activeWorkspaceId, 
-  activeId, 
-  onSelect, 
+export function DocSidebar({
+  workspaces,
+  docs,
+  activeWorkspaceId,
+  activeId,
+  onSelect,
   onSelectWorkspace,
-  onUpload, 
+  onUpload,
   onDelete,
   onCreateWorkspace,
   onUpdateWorkspace,
-  onDeleteWorkspace 
+  onDeleteWorkspace,
+  onExportPdf,
+  onConvertPptxToPdf,
 }: DocSidebarProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [expandedWorkspaces, setExpandedWorkspaces] = useState<Set<string>>(new Set());
   const [editingWorkspace, setEditingWorkspace] = useState<string | null>(null);
   const [editingName, setEditingName] = useState("");
+  const [convertingPptx, setConvertingPptx] = useState(false);
 
   const toggleWorkspace = (workspaceId: string) => {
     const newExpanded = new Set(expandedWorkspaces);
@@ -78,6 +84,27 @@ export function DocSidebar({
     }
   };
 
+  const handleConvertPptxToPdf = async () => {
+    if (!activeId || !onConvertPptxToPdf) return;
+    
+    const activeDoc = docs.find(doc => doc.id === activeId);
+    if (!activeDoc || activeDoc.type !== 'pptx') {
+      toast.error("Please select a PPTX file to convert.");
+      return;
+    }
+
+    setConvertingPptx(true);
+    try {
+      await onConvertPptxToPdf(activeId);
+      toast.success("PPTX converted to PDF successfully!");
+    } catch (error) {
+      console.error("Failed to convert PPTX to PDF:", error);
+      toast.error("Failed to convert PPTX to PDF. Please try again.");
+    } finally {
+      setConvertingPptx(false);
+    }
+  };
+
   return (
     <aside className="w-64 shrink-0 border-r border-border bg-surface flex flex-col">
       <div className="p-3 border-b border-border">
@@ -101,6 +128,21 @@ export function DocSidebar({
                 e.target.value = "";
               }}
             />
+            {activeId && docs.find(doc => doc.id === activeId)?.type === 'pptx' && (
+              <Button 
+                className="w-full" 
+                variant="outline"
+                onClick={handleConvertPptxToPdf}
+                disabled={convertingPptx || !onConvertPptxToPdf}
+              >
+                {convertingPptx ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <FileDown className="h-4 w-4 mr-2" />
+                )}
+                {convertingPptx ? "Converting..." : "Convert to PDF"}
+              </Button>
+            )}
           </div>
         ) : (
           <CreateWorkspaceButton onCreateWorkspace={onCreateWorkspace} />
@@ -210,6 +252,21 @@ export function DocSidebar({
                         >
                           <FileText className="h-3 w-3 mt-0.5 shrink-0 opacity-70" />
                           <span className="flex-1 truncate" title={doc.name}>{doc.name}</span>
+                          {doc.type === "pptx" && onExportPdf && (
+                            <span
+                              role="button"
+                              tabIndex={0}
+                              title="Export as PDF"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onSelect(doc.id);
+                                onExportPdf(doc.id);
+                              }}
+                              className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-primary p-0.5"
+                            >
+                              <FileDown className="h-3 w-3" />
+                            </span>
+                          )}
                           <span
                             role="button"
                             tabIndex={0}

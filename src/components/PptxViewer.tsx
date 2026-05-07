@@ -1,16 +1,22 @@
-import { useEffect, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import html2canvas from "html2canvas";
+import jsPDF from "jspdf";
 import { init } from "pptx-preview";
 import { Button } from "@/components/ui/button";
-import { ChevronLeft, ChevronRight, FileText, Loader2, Maximize2, ZoomIn, ZoomOut } from "lucide-react";
+import { ChevronLeft, ChevronRight, FileDown, FileText, Loader2, Maximize2, ZoomIn, ZoomOut } from "lucide-react";
 
 interface PptxViewerProps {
   file: Blob | null;
+  fileName?: string;
   page: number;
   onPageChange: (p: number) => void;
   onNumPages?: (n: number) => void;
   onExtractPageText?: (pageNumber: number, visibleText?: string) => void;
   extractingPageText?: boolean;
+}
+
+export interface PptxViewerHandle {
+  exportPdf: () => Promise<void>;
 }
 
 async function extractTextFromVisibleElement(element: HTMLElement) {
@@ -33,15 +39,17 @@ async function extractTextFromVisibleElement(element: HTMLElement) {
   }
 }
 
-export function PptxViewer({
+export const PptxViewer = forwardRef<PptxViewerHandle, PptxViewerProps>(function PptxViewer({
   file,
+  fileName,
   page,
   onPageChange,
   onNumPages,
   onExtractPageText,
   extractingPageText,
-}: PptxViewerProps) {
+}, ref) {
   const [slideCount, setSlideCount] = useState(0);
+  const [isExporting, setIsExporting] = useState(false);
   const [containerSize, setContainerSize] = useState({ width: 800, height: 600 });
   const previewHostRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -104,6 +112,52 @@ export function PptxViewer({
     const currentIndex = Math.min(Math.max(1, page), slideCount) - 1;
     previewerRef.current.renderSingleSlide(currentIndex);
   }, [page, slideCount]);
+
+  const handleExportPdf = async () => {
+    if (!previewerRef.current || slideCount === 0 || !previewHostRef.current) return;
+    setIsExporting(true);
+    const originalPage = page;
+    try {
+      const pdf = new jsPDF({ orientation: "landscape", unit: "px", compress: true });
+      const pdfW = pdf.internal.pageSize.getWidth();
+      const pdfH = pdf.internal.pageSize.getHeight();
+
+      for (let i = 0; i < slideCount; i++) {
+        previewerRef.current.renderSingleSlide(i);
+        await new Promise((r) => setTimeout(r, 120));
+
+        const slideEl = previewHostRef.current?.querySelector(
+          `.pptx-preview-slide-wrapper-${i}`
+        ) as HTMLElement | null;
+        if (!slideEl) continue;
+
+        const canvas = await html2canvas(slideEl, {
+          scale: 2,
+          useCORS: true,
+          allowTaint: true,
+          backgroundColor: "#ffffff",
+        });
+
+        const imgData = canvas.toDataURL("image/jpeg", 0.92);
+        const imgW = canvas.width;
+        const imgH = canvas.height;
+        const ratio = Math.min(pdfW / imgW, pdfH / imgH);
+        const x = (pdfW - imgW * ratio) / 2;
+        const y = (pdfH - imgH * ratio) / 2;
+
+        if (i > 0) pdf.addPage();
+        pdf.addImage(imgData, "JPEG", x, y, imgW * ratio, imgH * ratio);
+      }
+
+      const baseName = (fileName || "presentation").replace(/\.pptx$/i, "");
+      pdf.save(`${baseName}.pdf`);
+    } finally {
+      previewerRef.current?.renderSingleSlide(originalPage - 1);
+      setIsExporting(false);
+    }
+  };
+
+  useImperativeHandle(ref, () => ({ exportPdf: handleExportPdf }));
 
   if (!file) {
     return (
@@ -189,4 +243,4 @@ export function PptxViewer({
       </div>
     </div>
   );
-}
+});

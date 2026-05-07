@@ -17,12 +17,14 @@ import { toast } from "sonner";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { DocSidebar } from "@/components/DocSidebar";
 import { PdfViewer } from "@/components/PdfViewer";
-import { PptxViewer } from "@/components/PptxViewer";
+import { PptxViewer, type PptxViewerHandle } from "@/components/PptxViewer";
 import { NotesEditor } from "@/components/NotesEditor";
 import { ChatAI } from "@/components/ChatAI";
 import { FlashcardViewer } from "@/components/FlashcardViewer";
 import { QuizViewer } from "@/components/QuizViewer";
+import { SmartNotesGenerator } from "@/components/SmartNotesGenerator";
 import { storage, type DocMeta, type Workspace } from "@/lib/storage";
+import { markdownToHtml } from "@/lib/utils";
 
 const ACTIVE_WORKSPACE_STORAGE_KEY = "study-companion.activeWorkspaceId";
 
@@ -320,8 +322,11 @@ function StudyApp() {
   const [chatVisible, setChatVisible] = useState(false);
   const [flashcardOpen, setFlashcardOpen] = useState(false);
   const [quizOpen, setQuizOpen] = useState(false);
+  const [smartNotesOpen, setSmartNotesOpen] = useState(false);
+  const [pdfPageCount, setPdfPageCount] = useState(0);
   const [lastPageText, setLastPageText] = useState("");
   const editorRef = useRef<{ insertPageTag: () => void } | null>(null);
+  const pptxViewerRef = useRef<PptxViewerHandle | null>(null);
 
   // Load workspaces and docs on mount
   useEffect(() => {
@@ -357,6 +362,7 @@ function StudyApp() {
   // Reset per-doc state when the active doc changes
   useEffect(() => {
     setLastPageText("");
+    setPdfPageCount(0);
   }, [activeId]);
 
   // Load active doc + notes
@@ -538,18 +544,10 @@ function StudyApp() {
   }, [page]);
 
   const insertAIContent = useCallback((content: string) => {
-    // Convert plain text to HTML and insert into notes
-    const htmlContent = content
-      .split('\n')
-      .map(line => line.trim() ? `<p>${line.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\*(.+?)\*/g, '<em>$1</em>')}</p>` : '')
-      .filter(Boolean)
-      .join('');
-    
-    const aiBlock = `<div style="border-left: 3px solid #6ee7f7; padding-left: 12px; margin: 16px 0;">
-      <p><strong>— AI Response —</strong></p>
-      ${htmlContent}
-    </div>`;
-    
+    const aiBlock =
+      `<hr><p><strong>— AI Response —</strong></p>` +
+      markdownToHtml(content) +
+      `<hr>`;
     setNotesHtml((h) => (h ? h + aiBlock : aiBlock));
     toast('AI response added to notes');
   }, []);
@@ -592,6 +590,84 @@ function StudyApp() {
       setExtractingPageText(false);
     }
   }, [activeBlob, activeMeta]);
+
+  const handleConvertPptxToPdf = useCallback(async (docId: string) => {
+    const doc = docs.find(d => d.id === docId);
+    if (!doc || doc.type !== 'pptx') {
+      throw new Error('Document is not a PPTX file');
+    }
+
+    // Get the blob for this document
+    const blob = await storage.getBlob(docId);
+    if (!blob) {
+      throw new Error('Could not find document file');
+    }
+
+    // Create a temporary PptxViewer instance to handle the conversion
+    const tempContainer = document.createElement('div');
+    tempContainer.style.position = 'fixed';
+    tempContainer.style.left = '-10000px';
+    tempContainer.style.top = '0';
+    tempContainer.style.width = '800px';
+    tempContainer.style.height = '600px';
+    document.body.appendChild(tempContainer);
+
+    let previewer: any = null;
+    try {
+      const { init } = await import('pptx-preview');
+      previewer = init(tempContainer, {
+        width: 800,
+        height: 600,
+        mode: 'slide',
+      });
+
+      const arrayBuffer = await blob.arrayBuffer();
+      await previewer.preview(arrayBuffer);
+      
+      const slideCount = previewer.slideCount || 0;
+      if (slideCount === 0) {
+        throw new Error('No slides found in presentation');
+      }
+
+      // Create PDF
+      const jsPDF = await import('jspdf');
+      const html2canvas = await import('html2canvas');
+      const pdf = new jsPDF.default({ orientation: 'landscape', unit: 'px', compress: true });
+      const pdfW = pdf.internal.pageSize.getWidth();
+      const pdfH = pdf.internal.pageSize.getHeight();
+
+      for (let i = 0; i < slideCount; i++) {
+        previewer.renderSingleSlide(i);
+        await new Promise((r) => setTimeout(r, 120));
+
+        const slideEl = tempContainer.querySelector(`.pptx-preview-slide-wrapper-${i}`) as HTMLElement | null;
+        if (!slideEl) continue;
+
+        const canvas = await html2canvas.default(slideEl, {
+          scale: 2,
+          useCORS: true,
+          allowTaint: true,
+          backgroundColor: '#ffffff',
+        });
+
+        const imgData = canvas.toDataURL('image/jpeg', 0.92);
+        const imgW = canvas.width;
+        const imgH = canvas.height;
+        const ratio = Math.min(pdfW / imgW, pdfH / imgH);
+        const x = (pdfW - imgW * ratio) / 2;
+        const y = (pdfH - imgH * ratio) / 2;
+
+        if (i > 0) pdf.addPage();
+        pdf.addImage(imgData, 'JPEG', x, y, imgW * ratio, imgH * ratio);
+      }
+
+      const baseName = doc.name.replace(/\.pptx$/i, '');
+      pdf.save(`${baseName}.pdf`);
+    } finally {
+      previewer?.destroy();
+      document.body.removeChild(tempContainer);
+    }
+  }, [docs]);
 
   const formatNotesForExport = () => {
     if (!activeMeta) return "";
@@ -831,6 +907,14 @@ function StudyApp() {
           >
             <Sparkles className="h-4 w-4 mr-1.5" /> Quiz
           </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={!activeMeta}
+            onClick={() => setSmartNotesOpen(true)}
+          >
+            <BookOpen className="h-4 w-4 mr-1.5" /> Smart Notes
+          </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="sm" disabled={!activeMeta}>
@@ -864,6 +948,10 @@ function StudyApp() {
             onCreateWorkspace={handleCreateWorkspace}
             onUpdateWorkspace={handleUpdateWorkspace}
             onDeleteWorkspace={handleDeleteWorkspace}
+            onExportPdf={(id) => {
+              if (id === activeId) pptxViewerRef.current?.exportPdf();
+            }}
+            onConvertPptxToPdf={handleConvertPptxToPdf}
           />
         )}
         <main className="flex-1 min-w-0">
@@ -879,12 +967,15 @@ function StudyApp() {
                     file={activeBlob}
                     page={page}
                     onPageChange={setPage}
+                    onNumPages={setPdfPageCount}
                     onExtractPageText={handleExtractCurrentPageText}
                     extractingPageText={extractingPageText}
                   />
                 ) : activeMeta?.type === "pptx" ? (
                   <PptxViewer
+                    ref={pptxViewerRef}
                     file={activeBlob}
+                    fileName={activeMeta?.name}
                     page={page}
                     onPageChange={setPage}
                     onExtractPageText={handleExtractCurrentPageText}
@@ -930,6 +1021,20 @@ function StudyApp() {
         notesHtml={notesHtml}
         pageText={lastPageText}
         currentPage={page}
+      />
+
+      {/* Smart Notes Generator */}
+      <SmartNotesGenerator
+        isOpen={smartNotesOpen}
+        onClose={() => setSmartNotesOpen(false)}
+        activeBlob={activeBlob}
+        activeMeta={activeMeta}
+        totalPages={activeMeta?.type === "pdf" ? pdfPageCount : pptxSlideCount}
+        currentPage={page}
+        onInsertToNotes={(html) => {
+          setNotesHtml((h) => (h ? h + html : html));
+          toast.success("Smart notes added to your notes!");
+        }}
       />
     </div>
   );

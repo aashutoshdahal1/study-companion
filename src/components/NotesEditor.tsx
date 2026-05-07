@@ -21,6 +21,9 @@ import {
   X,
   Image,
 } from "lucide-react";
+import { handleRichPaste, shouldProcessAsRichContent, createPlainTextFallback } from "@/lib/rich-content-handler";
+import { enhancedExtensions, detectLanguage } from "@/lib/tiptap-extensions";
+import { EditableRichContent, EditableCodeBlock, EditableTable } from "@/components/EditableRichContent";
 
 interface GrammarCorrection {
   id: string;
@@ -155,11 +158,13 @@ function ToolbarButton({
   );
 }
 
-function Toolbar({ editor, onInsertPageTag, triggerImageUpload, isUploadingImage }: { 
+function Toolbar({ editor, onInsertPageTag, triggerImageUpload, isUploadingImage, editMode, onEditModeChange }: { 
   editor: Editor | null; 
   onInsertPageTag?: () => void;
   triggerImageUpload?: () => void;
   isUploadingImage?: boolean;
+  editMode: 'editor' | 'editable';
+  onEditModeChange: (mode: 'editor' | 'editable') => void;
 }) {
   if (!editor) return null;
 
@@ -222,6 +227,15 @@ function Toolbar({ editor, onInsertPageTag, triggerImageUpload, isUploadingImage
           <Hash className="h-4 w-4" />
         </ToolbarButton>
       )}
+      <div className="w-px h-5 bg-border mx-1" />
+      <ToolbarButton 
+        title={editMode === 'editor' ? "Switch to editable mode" : "Switch to editor mode"} 
+        active={editMode === 'editable'}
+        onClick={() => onEditModeChange(editMode === 'editor' ? 'editable' : 'editor')}
+        className="ml-2"
+      >
+        <Sparkles className="h-4 w-4" />
+      </ToolbarButton>
       <div className="ml-auto flex items-center gap-0.5">
         <ToolbarButton title="Undo" onClick={() => editor.chain().focus().undo().run()}>
           <Undo className="h-4 w-4" />
@@ -241,6 +255,7 @@ export function NotesEditor({ value, onChange, onInsertPageTag }: NotesEditorPro
   const [selectedText, setSelectedText] = useState("");
   const [correctedText, setCorrectedText] = useState("");
   const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [editMode, setEditMode] = useState<'editor' | 'editable'>('editor');
   const longPressTimer = useRef<NodeJS.Timeout | null>(null);
   const editorRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -248,6 +263,7 @@ export function NotesEditor({ value, onChange, onInsertPageTag }: NotesEditorPro
   const editor = useEditor({
     extensions: [
       StarterKit,
+      ...enhancedExtensions,
       TipTapImage.configure({
         allowBase64: true,
         HTMLAttributes: {
@@ -260,6 +276,76 @@ export function NotesEditor({ value, onChange, onInsertPageTag }: NotesEditorPro
       attributes: {
         class: "prose-notes focus:outline-none px-6 py-5 max-w-none",
         "data-placeholder": "Start writing your notes…",
+      },
+      handlePaste: (view, event, slice) => {
+        // Handle rich content paste
+        handleRichPaste(event).then(pastedContent => {
+          if (pastedContent && shouldProcessAsRichContent(pastedContent)) {
+            event.preventDefault();
+            
+            // Insert the processed HTML content
+            const { state, dispatch } = view;
+            const { from } = state.selection;
+            
+            // Create a transaction to insert the content
+            const tr = state.tr.insert(
+              from,
+              state.schema.text(pastedContent.text, [
+                state.schema.mark('pasteMetadata', {
+                  pasteSource: pastedContent.source,
+                  pasteTimestamp: Date.now()
+                })
+              ])
+            );
+            
+            dispatch(tr);
+            
+            // If there's HTML content, also insert it
+            if (pastedContent.html && pastedContent.html !== pastedContent.text) {
+              setTimeout(() => {
+                // Convert HTML to ProseMirror nodes and insert
+                const div = document.createElement('div');
+                div.innerHTML = pastedContent.html;
+                const nodes = [];
+                
+                div.childNodes.forEach(node => {
+                  if (node.nodeType === Node.ELEMENT_NODE) {
+                    const element = node as HTMLElement;
+                    // Handle different element types
+                    if (element.tagName === 'PRE' && element.querySelector('code')) {
+                      const codeEl = element.querySelector('code');
+                      const language = codeEl?.getAttribute('data-language') || detectLanguage(codeEl?.textContent || '');
+                      const codeContent = codeEl?.textContent || '';
+                      
+                      // Insert as code block
+                      if (editor) {
+                        editor.commands.setCodeBlock({ language });
+                        editor.commands.insertContent(codeContent);
+                      }
+                    } else if (element.tagName === 'TABLE') {
+                      // Handle table insertion
+                      if (editor) {
+                        editor.commands.insertContent(element.outerHTML);
+                      }
+                    } else {
+                      // Handle other elements
+                      if (editor) {
+                        editor.commands.insertContent(element.outerHTML);
+                      }
+                    }
+                  }
+                });
+              }, 0);
+            }
+            
+            return true;
+          }
+        }).catch(err => {
+          console.error('Error handling rich paste:', err);
+        });
+        
+        // Fall back to default paste handling
+        return false;
       },
     },
     onUpdate: ({ editor }) => {
@@ -660,6 +746,8 @@ export function NotesEditor({ value, onChange, onInsertPageTag }: NotesEditorPro
         onInsertPageTag={onInsertPageTag}
         triggerImageUpload={triggerImageUpload}
         isUploadingImage={isUploadingImage}
+        editMode={editMode}
+        onEditModeChange={setEditMode}
       />
       <div 
         className="flex-1 overflow-auto" 
@@ -675,7 +763,17 @@ export function NotesEditor({ value, onChange, onInsertPageTag }: NotesEditorPro
           }
         }}
       >
-        <EditorContent editor={editor} className="h-full pb-32" />
+        {editMode === 'editor' ? (
+          <EditorContent editor={editor} className="h-full pb-32" />
+        ) : (
+          <div className="h-full pb-32">
+            <EditableRichContent
+              html={value}
+              onChange={onChange}
+              placeholder="Double-click any element to edit it..."
+            />
+          </div>
+        )}
       </div>
       
       {/* Grammar correction menu */}

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { X, ChevronLeft, ChevronRight, Loader2, Sparkles, RotateCcw, FileText, BookOpen, Shuffle } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { storage, type Flashcard, type FlashcardDeck } from "@/lib/storage";
+import { storage, type Flashcard } from "@/lib/storage";
 import { toast } from "sonner";
 
 interface FlashcardViewerProps {
@@ -35,14 +35,50 @@ function parseFlashcardsFromResponse(text: string): Flashcard[] {
   return [];
 }
 
-const FLASHCARD_PROMPT = (text: string) =>
-  `Generate 8 study flashcards from the following text. Return ONLY a valid JSON array — no markdown code fences, no explanation, nothing else. Each element must have exactly two string fields: "question" and "answer".
+const FLASHCARD_PROMPT = (text: string) => {
+  const trimmed = text.slice(0, 3500);
+  const count = Math.min(15, Math.max(8, Math.floor(trimmed.length / 300)));
+  return `Generate ${count} study flashcards from the following text. Return ONLY a valid JSON array — no markdown code fences, no explanation, nothing else. Each element must have exactly two string fields: "question" and "answer".
 
 Example of the exact format to return:
 [{"question":"What is X?","answer":"X is Y"},{"question":"Define Z","answer":"Z means W"}]
 
 Study material:
-${text.slice(0, 3000)}`;
+${trimmed}`;
+};
+
+async function callDeepAI(text: string, signal: AbortSignal): Promise<string> {
+  const params = new URLSearchParams({
+    chat_style: "chat",
+    model: "standard",
+    session_uuid: crypto.randomUUID(),
+    sensitivity_request_id: crypto.randomUUID(),
+    hacker_is_stinky: "very_stinky",
+    chatHistory: JSON.stringify([{ role: "user", content: FLASHCARD_PROMPT(text) }]),
+    enabled_tools: JSON.stringify([]),
+  });
+
+  const response = await fetch("http://localhost:8787/api", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: params.toString(),
+    signal,
+  });
+  if (!response.ok) throw new Error(`DeepAI HTTP ${response.status}`);
+
+  const reader = response.body?.getReader();
+  const decoder = new TextDecoder();
+  let result = "";
+
+  if (reader) {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      result += decoder.decode(value, { stream: true });
+    }
+  }
+  return result;
+}
 
 async function callZaiProxy(text: string, token: string, signal: AbortSignal): Promise<string> {
   const payload = {
@@ -69,63 +105,46 @@ async function callZaiProxy(text: string, token: string, signal: AbortSignal): P
 
   const reader = response.body?.getReader();
   const decoder = new TextDecoder();
-  let buffer = "";
-  let result = "";
+  let buffer = '';
+  let answerText = '';
+  const rawLines: string[] = [];
 
   const processLine = (line: string) => {
-    if (!line.startsWith("data: ")) return;
+    rawLines.push(line);
+    if (!line.startsWith('data: ')) return;
     const raw = line.slice(6).trim();
-    if (!raw || raw === "[DONE]") return;
+    if (!raw || raw === '[DONE]') return;
     try {
       const evt = JSON.parse(raw);
       const d = evt.data;
       if (!d) return;
       const chunk = d.delta_content || d.edit_content;
-      if (chunk && (d.phase === "answer" || d.phase === "other")) result += chunk;
-    } catch {}
+      if (!chunk) return;
+      answerText += chunk;
+    } catch (e) {
+      console.warn('JSON parse fail:', raw);
+    }
   };
 
   if (reader) {
     while (true) {
       const { done, value } = await reader.read();
-      if (done) { if (buffer.trim()) processLine(buffer.trim()); break; }
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
+      if (done) {
+        if (buffer.trim()) processLine(buffer.trim());
+        break;
+      }
+      const chunk = decoder.decode(value, { stream: true });
+      buffer += chunk;
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
       for (const line of lines) processLine(line);
     }
   }
-  return result;
-}
 
-async function callDeepaiProxy(text: string, signal: AbortSignal): Promise<string> {
-  const params = new URLSearchParams({
-    chat_style: "chat",
-    model: "standard",
-    session_uuid: crypto.randomUUID(),
-    sensitivity_request_id: crypto.randomUUID(),
-    hacker_is_stinky: "very_stinky",
-    chatHistory: JSON.stringify([{ role: "user", content: FLASHCARD_PROMPT(text) }]),
-    enabled_tools: JSON.stringify([]),
-  });
-
-  const response = await fetch("http://localhost:8787/api", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: params.toString(),
-    signal,
-  });
-  if (!response.ok) throw new Error(`DeepAI HTTP ${response.status}`);
-
-  const reader = response.body?.getReader();
-  const decoder = new TextDecoder();
-  let result = "";
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    result += decoder.decode(value, { stream: true });
+  if (!answerText) {
+    console.warn('Z.ai returned empty — raw lines sample:', rawLines.slice(0, 10));
   }
-  return result;
+  return answerText;
 }
 
 export function FlashcardViewer({ isOpen, onClose, docId, notesHtml, pageText, currentPage }: FlashcardViewerProps) {
@@ -149,7 +168,7 @@ export function FlashcardViewer({ isOpen, onClose, docId, notesHtml, pageText, c
   }, [docId, isOpen]);
 
   const handleGenerate = useCallback(async () => {
-    if (!docId || isGenerating) return;
+    if (!docId) return;
 
     const rawText = source === "notes" ? stripHtml(notesHtml) : (pageText || "");
     if (!rawText.trim()) {
@@ -167,17 +186,34 @@ export function FlashcardViewer({ isOpen, onClose, docId, notesHtml, pageText, c
     try {
       const token = localStorage.getItem("zai-glm-bearer-token") || "";
       let responseText = "";
+      let zaiError: string | null = null;
 
       if (token) {
-        try { responseText = await callZaiProxy(rawText, token, abort.signal); } catch {}
+        try {
+          responseText = await callZaiProxy(rawText, token, abort.signal);
+          console.log("Flashcard - Z.ai response length:", responseText.length);
+        } catch (error) {
+          zaiError = error instanceof Error ? error.message : String(error);
+          console.error("Flashcard - Z.ai proxy error:", zaiError);
+        }
+      } else {
+        zaiError = "No Z.ai token found in localStorage";
+        console.warn("Flashcard -", zaiError);
       }
 
       if (!responseText) {
-        try { responseText = await callDeepaiProxy(rawText, abort.signal); } catch {}
+        try {
+          responseText = await callDeepAI(rawText, abort.signal);
+        } catch (error) {
+          console.error("Flashcard - DeepAI error:", error);
+        }
       }
 
       if (!responseText) {
-        throw new Error("No AI backend reachable. Configure your Z.ai token or start the DeepAI proxy.");
+        const hint = zaiError
+          ? `Z.ai error: ${zaiError}`
+          : "No Z.ai token configured — add it in chat settings.";
+        throw new Error(`Flashcard generation failed. ${hint}`);
       }
 
       const parsed = parseFlashcardsFromResponse(responseText);
@@ -196,7 +232,7 @@ export function FlashcardViewer({ isOpen, onClose, docId, notesHtml, pageText, c
     } finally {
       setIsGenerating(false);
     }
-  }, [docId, isGenerating, source, notesHtml, pageText]);
+  }, [docId, source, notesHtml, pageText]);
 
   const goNext = useCallback(() => {
     setIsFlipped(false);

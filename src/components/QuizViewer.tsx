@@ -103,36 +103,6 @@ async function callZaiProxy(text: string, token: string, signal: AbortSignal): P
   return result;
 }
 
-async function callDeepaiProxy(text: string, signal: AbortSignal): Promise<string> {
-  const params = new URLSearchParams({
-    chat_style: "chat",
-    model: "standard",
-    session_uuid: crypto.randomUUID(),
-    sensitivity_request_id: crypto.randomUUID(),
-    hacker_is_stinky: "very_stinky",
-    chatHistory: JSON.stringify([{ role: "user", content: QUIZ_PROMPT(text) }]),
-    enabled_tools: JSON.stringify([]),
-  });
-
-  const response = await fetch("http://localhost:8787/api", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: params.toString(),
-    signal,
-  });
-  if (!response.ok) throw new Error(`DeepAI HTTP ${response.status}`);
-
-  const reader = response.body?.getReader();
-  const decoder = new TextDecoder();
-  let result = "";
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    result += decoder.decode(value, { stream: true });
-  }
-  return result;
-}
-
 export function QuizViewer({ isOpen, onClose, notesHtml, pageText, currentPage }: QuizViewerProps) {
   const [questions, setQuestions] = useState<Question[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -172,13 +142,15 @@ export function QuizViewer({ isOpen, onClose, notesHtml, pageText, currentPage }
       let responseText = "";
 
       if (token) {
-        try { responseText = await callZaiProxy(rawText, token, abort.signal); } catch {}
+        try { 
+          responseText = await callZaiProxy(rawText, token, abort.signal); 
+        } catch (error) {
+          console.error("Quiz - Z.ai proxy error:", error);
+        }
       }
+
       if (!responseText) {
-        try { responseText = await callDeepaiProxy(rawText, abort.signal); } catch {}
-      }
-      if (!responseText) {
-        throw new Error("No AI backend reachable. Configure your Z.ai token or start the DeepAI proxy.");
+        throw new Error("Z.ai token not configured. Please add your Z.ai token in chat settings.");
       }
 
       const parsed = parseQuestions(responseText);

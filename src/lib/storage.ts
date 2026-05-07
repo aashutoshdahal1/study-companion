@@ -1,6 +1,6 @@
 // IndexedDB-backed persistence for documents (PDF blobs), notes, and flashcard decks.
 const DB_NAME = "studysync";
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 
 export interface Workspace {
   id: string;
@@ -72,8 +72,8 @@ function open(): Promise<IDBDatabase> {
         console.log("Stores created:", Array.from(db.objectStoreNames));
       }
 
-      // Add flashcards store for users upgrading from v3
-      if (oldVersion === 3 && !db.objectStoreNames.contains("flashcards")) {
+      // Add flashcards store for users upgrading from v3 or v4
+      if ((oldVersion === 3 || oldVersion === 4) && !db.objectStoreNames.contains("flashcards")) {
         db.createObjectStore("flashcards", { keyPath: "docId" });
       }
 

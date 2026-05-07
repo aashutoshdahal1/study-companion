@@ -1,0 +1,186 @@
+/* Editable content styles for Notion-like inline editing */
+
+.editable-content {
+  position: relative;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.editable-content:hover {
+  background-color: rgba(59, 130, 246, 0.05);
+  outline: 1px solid rgba(59, 130, 246, 0.2);
+}
+
+.editable-content.editing {
+  background-color: rgba(59, 130, 246, 0.1);
+  outline: 2px solid rgba(59, 130, 246, 0.3);
+  outline-offset: 2px;
+  cursor: text;
+}
+
+.editable-content:focus {
+  outline: 2px solid rgba(59, 130, 246, 0.5);
+  outline-offset: 2px;
+}
+
+.no-edit {
+  cursor: default !important;
+}
+
+.no-edit:hover {
+  background-color: transparent !important;
+  outline: none !important;
+}
+
+/* Code block styling */
+pre code {
+  user-select: text;
+  cursor: text;
+}
+
+pre {
+  cursor: default;
+}
+
+/* Table cell editing */
+td.editing, th.editing {
+  outline: 2px solid rgba(59, 130, 246, 0.5);
+  outline-offset: -2px;
+}
+
+/* List item editing */
+li.editing {
+  outline: 2px solid rgba(59, 130, 246, 0.3);
+  outline-offset: 2px;
+}
+
+/* Editable code block styles */
+.editable-code-block {
+  position: relative;
+  border-radius: 8px;
+  overflow: hidden;
+  margin: 1rem 0;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+.editable-code-block textarea {
+  font-family: 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 14px;
+  line-height: 1.5;
+  resize: vertical;
+  min-height: 100px;
+}
+
+/* Editable table styles */
+.editable-table-wrapper {
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.06);
+}
+
+.editable-table-wrapper table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.editable-table-wrapper th,
+.editable-table-wrapper td {
+  position: relative;
+  transition: all 0.2s ease;
+}
+
+.editable-table-wrapper th:hover,
+.editable-table-wrapper td:hover {
+  background-color: rgba(59, 130, 246, 0.05);
+}
+
+.editable-table-wrapper input {
+  background: transparent;
+  border: none;
+  outline: none;
+  width: 100%;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+/* Dark theme adjustments */
+.dark .editable-content:hover {
+  background-color: rgba(59, 130, 246, 0.1);
+  outline-color: rgba(59, 130, 246, 0.3);
+}
+
+.dark .editable-content.editing {
+  background-color: rgba(59, 130, 246, 0.2);
+  outline-color: rgba(59, 130, 246, 0.4);
+}
+
+.dark .editable-table-wrapper th:hover,
+.dark .editable-table-wrapper td:hover {
+  background-color: rgba(59, 130, 246, 0.1);
+}
+
+/* Light theme adjustments */
+.light .editable-content:hover {
+  background-color: rgba(59, 130, 246, 0.08);
+  outline-color: rgba(59, 130, 246, 0.25);
+}
+
+.light .editable-content.editing {
+  background-color: rgba(59, 130, 246, 0.12);
+  outline-color: rgba(59, 130, 246, 0.35);
+}
+
+/* Animation styles */
+@keyframes editPulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(59, 130, 246, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
+  }
+}
+
+.editable-content.editing {
+  animation: editPulse 2s infinite;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .editable-code-block textarea {
+    font-size: 12px;
+    padding: 0.75rem;
+  }
+  
+  .editable-table-wrapper {
+    font-size: 14px;
+  }
+  
+  .editable-table-wrapper th,
+  .editable-table-wrapper td {
+    padding: 0.5rem;
+  }
+}
+
+/* Print styles */
+@media print {
+  .editable-content {
+    cursor: default;
+  }
+  
+  .editable-content:hover,
+  .editable-content.editing {
+    background-color: transparent;
+    outline: none;
+  }
+  
+  .editable-code-block textarea {
+    border: 1px solid #ccc;
+    background: #fff;
+    color: #000;
+  }
+}

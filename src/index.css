@@ -2,6 +2,10 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Import syntax highlighting and editable content styles */
+@import './styles/syntax-highlighting.css';
+@import './styles/editable-content.css';
+
 @layer base {
   :root {
     --background: 40 30% 98%;
@@ -122,9 +126,33 @@
   .prose-notes code { @apply bg-muted px-1.5 py-0.5 rounded text-sm font-mono; }
   .prose-notes a { @apply text-primary underline underline-offset-2; }
   .prose-notes strong { @apply font-semibold; }
+  .prose-notes table { @apply w-full border-collapse my-3; }
+  .prose-notes th { @apply border border-border bg-muted/50 px-3 py-1.5 text-left font-semibold text-sm; }
+  .prose-notes td { @apply border border-border px-3 py-1.5 text-sm align-top; }
+  .prose-notes tr:nth-child(even) td { @apply bg-muted/20; }
   .ProseMirror { @apply outline-none min-h-[60vh]; }
   .ProseMirror p.is-editor-empty:first-child::before {
     content: attr(data-placeholder);
     @apply text-muted-foreground float-left h-0 pointer-events-none;
   }
+
+  /* Chat message markdown rendering */
+  .chat-md { @apply text-sm leading-relaxed; }
+  .chat-md h1 { @apply text-base font-bold mt-2 mb-1; }
+  .chat-md h2 { @apply text-sm font-bold mt-2 mb-1; }
+  .chat-md h3 { @apply text-sm font-semibold mt-2 mb-1; }
+  .chat-md p { @apply my-1; }
+  .chat-md ul { @apply list-disc pl-4 my-1 space-y-0.5; }
+  .chat-md ol { @apply list-decimal pl-4 my-1 space-y-0.5; }
+  .chat-md li { @apply leading-snug; }
+  .chat-md blockquote { @apply border-l-2 border-primary/50 pl-3 italic text-muted-foreground my-2; }
+  .chat-md code { @apply bg-background/70 px-1 py-0.5 rounded text-xs font-mono; }
+  .chat-md pre { @apply bg-background/70 rounded p-2 my-2 overflow-x-auto text-xs font-mono; }
+  .chat-md pre code { @apply bg-transparent p-0; }
+  .chat-md hr { @apply border-t border-border/60 my-2; }
+  .chat-md strong { @apply font-semibold; }
+  .chat-md table { @apply w-full border-collapse my-2 text-xs; }
+  .chat-md th { @apply border border-border bg-muted/60 px-2 py-1 text-left font-semibold; }
+  .chat-md td { @apply border border-border px-2 py-1 align-top; }
+  .chat-md tr:nth-child(even) td { @apply bg-muted/20; }
 }

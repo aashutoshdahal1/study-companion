@@ -41,6 +41,10 @@ app.get('/index.html', (req, res) => {
   res.sendFile(htmlPath);
 });
 
+app.get("/health", (req, res) => {
+  setCors(res, 'application/json');
+  res.status(200).send('{"status":"healthy"}');
+}); 
 app.post('/', express.raw({ type: 'application/json', limit: '10mb' }), async (req, res) => {
   const token = req.get('X-Token') || '';
   const cookie = req.get('X-Cookie') || '';
@@ -109,7 +113,7 @@ app.post('/', express.raw({ type: 'application/json', limit: '10mb' }), async (r
   }
 });
 
-app.listen(PORT, 'localhost', () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`✓ Proxy running at http://localhost:${PORT}/`);
   console.log(`  Open http://localhost:${PORT}/ in your browser`);
   console.log('  Press Ctrl+C to stop\n');

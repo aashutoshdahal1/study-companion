@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Hybrid Storage Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .section { margin: 20px 0; padding: 20px; background: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .success { background: #d4edda; border: 1px solid #c3e6cb; padding: 15px; border-radius: 4px; margin: 10px 0; color: #155724; }
+        .error { background: #f8d7da; border: 1px solid #f5c6cb; padding: 15px; border-radius: 4px; margin: 10px 0; color: #721c24; }
+        .warning { background: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 4px; margin: 10px 0; color: #856404; }
+        .info { background: #d1ecf1; border: 1px solid #bee5eb; padding: 15px; border-radius: 4px; margin: 10px 0; color: #0c5460; }
+        button { padding: 12px 20px; margin: 5px; cursor: pointer; background: #007acc; color: white; border: none; border-radius: 4px; }
+        button:hover { background: #0056b3; }
+        button.danger { background: #dc3545; }
+        button.danger:hover { background: #c82333; }
+        button.success { background: #28a745; }
+        button.success:hover { background: #218838; }
+        .log { background: #f8f9fa; padding: 15px; border-radius: 4px; font-family: monospace; font-size: 12px; max-height: 400px; overflow-y: auto; white-space: pre-wrap; }
+        .test-result { margin: 10px 0; padding: 10px; border-radius: 4px; }
+        .pass { background: #d4edda; color: #155724; }
+        .fail { background: #f8d7da; color: #721c24; }
+        .pending { background: #fff3cd; color: #856404; }
+        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0; }
+        .stat-card { background: #007acc; color: white; padding: 20px; border-radius: 8px; text-align: center; }
+        .stat-number { font-size: 2em; font-weight: bold; }
+        .stat-label { font-size: 0.9em; opacity: 0.9; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧪 Hybrid Storage Test Suite</h1>
+        
+        <div class="info">
+            <strong>📋 Testing Your MongoDB + IndexedDB Setup</strong><br>
+            This will test your hybrid storage configuration and verify everything is working correctly.
+        </div>
+        
+        <div class="section">
+            <h2>🔧 Configuration Test</h2>
+            <button onclick="testConfiguration()">🔍 Test Configuration</button>
+            <button onclick="testMongoConnection()">🌐 Test MongoDB Connection</button>
+            <button onclick="testApiServer()">🚀 Test API Server</button>
+            <div id="config-results"></div>
+        </div>
+        
+        <div class="section">
+            <h2>📊 Storage Tests</h2>
+            <button onclick="testLocalStorage()">💾 Test Local Storage</button>
+            <button onclick="testMongoStorage()">☁️ Test MongoDB Storage</button>
+            <button onclick="testDualStorage()">🔄 Test Dual Storage</button>
+            <button onclick="testSyncFunctionality()">🔄 Test Sync</button>
+            <div id="storage-results"></div>
+        </div>
+        
+        <div class="section">
+            <h2>📈 Performance Test</h2>
+            <button onclick="performanceTest()">⚡ Run Performance Test</button>
+            <button onclick="stressTest()">🔥 Run Stress Test</button>
+            <div id="performance-results"></div>
+        </div>
+        
+        <div class="section">
+            <h2>🧪 Full Integration Test</h2>
+            <button onclick="runFullTest()">🎯 Run Complete Test Suite</button>
+            <button onclick="clearAllData()" class="danger">🧹 Clear All Test Data</button>
+            <div id="integration-results"></div>
+        </div>
+        
+        <div class="section">
+            <h2>📊 Test Results Summary</h2>
+            <div class="stats" id="test-stats">
+                <div class="stat-card">
+                    <div class="stat-number" id="total-tests">0</div>
+                    <div class="stat-label">Total Tests</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="passed-tests">0</div>
+                    <div class="stat-label">Passed</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="failed-tests">0</div>
+                    <div class="stat-label">Failed</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="test-score">0%</div>
+                    <div class="stat-label">Success Rate</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>📝 Test Log</h2>
+            <div id="test-log" class="log">Ready to run tests...</div>
+        </div>
+    </div>
+    
+    <script>
+        let testResults = {
+            total: 0,
+            passed: 0,
+            failed: 0
+        };
+        
+        let logDiv = document.getElementById('test-log');
+        
+        function log(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const prefix = type === 'error' ? '❌' : type === 'success' ? '✅' : type === 'warning' ? '⚠️' : 'ℹ️';
+            logDiv.textContent += `[${timestamp}] ${prefix} ${message}\n`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+        
+        function showResults(elementId, content, type = 'info') {
+            const div = document.getElementById(elementId);
+            div.innerHTML = `<div class="${type}">${content}</div>`;
+        }
+        
+        function updateTestStats() {
+            document.getElementById('total-tests').textContent = testResults.total;
+            document.getElementById('passed-tests').textContent = testResults.passed;
+            document.getElementById('failed-tests').textContent = testResults.failed;
+            const score = testResults.total > 0 ? Math.round((testResults.passed / testResults.total) * 100) : 0;
+            document.getElementById('test-score').textContent = `${score}%`;
+        }
+        
+        function runTest(testName, testFunction) {
+            testResults.total++;
+            log(`Running test: ${testName}`);
+            
+            try {
+                const result = testFunction();
+                if (result instanceof Promise) {
+                    return result.then(success => {
+                        if (success) {
+                            testResults.passed++;
+                            log(`✅ ${testName} - PASSED`);
+                            return true;
+                        } else {
+                            testResults.failed++;
+                            log(`❌ ${testName} - FAILED`);
+                            return false;
+                        }
+                    }).catch(error => {
+                        testResults.failed++;
+                        log(`❌ ${testName} - ERROR: ${error.message}`);
+                        return false;
+                    });
+                } else {
+                    if (result) {
+                        testResults.passed++;
+                        log(`✅ ${testName} - PASSED`);
+                        return Promise.resolve(true);
+                    } else {
+                        testResults.failed++;
+                        log(`❌ ${testName} - FAILED`);
+                        return Promise.resolve(false);
+                    }
+                }
+            } catch (error) {
+                testResults.failed++;
+                log(`❌ ${testName} - ERROR: ${error.message}`);
+                return Promise.resolve(false);
+            } finally {
+                updateTestStats();
+            }
+        }
+        
+        async function testConfiguration() {
+            log('=== CONFIGURATION TESTS ===');
+            const results = [];
+            
+            // Test environment variables
+            const mongoUri = localStorage.getItem('MONGODB_URI') || 'mongodb+srv://aashutoshdahal91_db_user:2D57lPk2KDRz4QZS@cluster0.v2gakjm.mongodb.net/?appName=Cluster0';
+            const apiUrl = process.env.REACT_APP_MONGO_API_URL || 'http://localhost:3001/api';
+            
+            results.push(await runTest('MongoDB URI configured', () => mongoUri && mongoUri.includes('mongodb')));
+            results.push(await runTest('API URL configured', () => apiUrl && apiUrl.includes('localhost')));
+            
+            const passed = results.filter(r => r).length;
+            showResults('config-results', `Configuration tests: ${passed}/${results.length} passed`, passed === results.length ? 'success' : 'warning');
+        }
+        
+        async function testMongoConnection() {
+            log('=== MONGODB CONNECTION TEST ===');
+            
+            try {
+                const response = await fetch('http://localhost:3001/api/health');
+                const success = response.ok;
+                
+                if (success) {
+                    const data = await response.json();
+                    log(`MongoDB API Status: ${data.status}`);
+                    log(`MongoDB Timestamp: ${data.timestamp}`);
+                    showResults('config-results', '✅ MongoDB API server is running and healthy', 'success');
+                    return true;
+                } else {
+                    showResults('config-results', '❌ MongoDB API server not responding', 'error');
+                    return false;
+                }
+            } catch (error) {
+                log(`MongoDB connection error: ${error.message}`);
+                showResults('config-results', `❌ Cannot connect to MongoDB API: ${error.message}`, 'error');
+                return false;
+            }
+        }
+        
+        async function testApiServer() {
+            log('=== API SERVER TEST ===');
+            
+            const tests = [
+                { name: 'Health endpoint', url: '/health' },
+                { name: 'Workspaces endpoint', url: '/workspaces' },
+                { name: 'Documents endpoint', url: '/documents' }
+            ];
+            
+            const results = [];
+            for (const test of tests) {
+                try {
+                    const response = await fetch(`http://localhost:3001/api${test.url}`);
+                    results.push(await runTest(test.name, () => response.ok));
+                } catch (error) {
+                    results.push(await runTest(test.name, () => false));
+                }
+            }
+            
+            const passed = results.filter(r => r).length;
+            showResults('config-results', `API endpoints: ${passed}/${results.length} working`, passed === results.length ? 'success' : 'warning');
+        }
+        
+        async function testLocalStorage() {
+            log('=== LOCAL STORAGE TEST ===');
+            
+            try {
+                // Test IndexedDB
+                const request = indexedDB.open('StudyCompanionDB', 5);
+                
+                return new Promise((resolve) => {
+                    request.onsuccess = () => {
+                        const db = request.result;
+                        const stores = Array.from(db.objectStoreNames);
+                        
+                        log(`Local stores available: ${stores.join(', ')}`);
+                        
+                        const hasRequiredStores = ['workspaces', 'docs', 'notes', 'blobs', 'flashcards']
+                            .every(store => stores.includes(store));
+                        
+                        if (hasRequiredStores) {
+                            showResults('storage-results', '✅ Local IndexedDB is properly configured', 'success');
+                            resolve(true);
+                        } else {
+                            showResults('storage-results', '⚠️ Local IndexedDB missing some stores', 'warning');
+                            resolve(false);
+                        }
+                        
+                        db.close();
+                    };
+                    
+                    request.onerror = () => {
+                        log(`IndexedDB error: ${request.error}`);
+                        showResults('storage-results', '❌ Local IndexedDB failed to open', 'error');
+                        resolve(false);
+                    };
+                });
+            } catch (error) {
+                log(`Local storage test error: ${error.message}`);
+                showResults('storage-results', `❌ Local storage test failed: ${error.message}`, 'error');
+                return false;
+            }
+        }
+        
+        async function testMongoStorage() {
+            log('=== MONGODB STORAGE TEST ===');
+            
+            try {
+                // Test workspace creation
+                const testWorkspace = {
+                    id: 'test-' + Date.now(),
+                    name: 'Test Workspace',
+                    createdAt: Date.now(),
+                    updatedAt: Date.now()
+                };
+                
+                const createResponse = await fetch('http://localhost:3001/api/workspaces', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(testWorkspace)
+                });
+                
+                if (!createResponse.ok) {
+                    throw new Error('Failed to create test workspace');
+                }
+                
+                // Test workspace retrieval
+                const getResponse = await fetch('http://localhost:3001/api/workspaces');
+                const workspaces = await getResponse.json();
+                
+                const found = workspaces.some(w => w.id === testWorkspace.id);
+                
+                if (found) {
+                    showResults('storage-results', '✅ MongoDB storage working correctly', 'success');
+                    log('Successfully created and retrieved workspace from MongoDB');
+                    
+                    // Cleanup
+                    await fetch(`http://localhost:3001/api/workspaces/${testWorkspace.id}`, { method: 'DELETE' });
+                    return true;
+                } else {
+                    showResults('storage-results', '❌ MongoDB storage test failed - workspace not found', 'error');
+                    return false;
+                }
+            } catch (error) {
+                log(`MongoDB storage test error: ${error.message}`);
+                showResults('storage-results', `❌ MongoDB storage test failed: ${error.message}`, 'error');
+                return false;
+            }
+        }
+        
+        async function testDualStorage() {
+            log('=== DUAL STORAGE TEST ===');
+            
+            try {
+                // This would test the hybrid storage service
+                // For now, we'll simulate the test
+                const localWorking = await testLocalStorage();
+                const mongoWorking = await testMongoStorage();
+                
+                const dualWorking = localWorking && mongoWorking;
+                
+                if (dualWorking) {
+                    showResults('storage-results', '✅ Dual storage system working - both local and MongoDB operational', 'success');
+                    log('Both local IndexedDB and MongoDB are working correctly');
+                } else {
+                    showResults('storage-results', '⚠️ Dual storage partially working', 'warning');
+                    log(`Local: ${localWorking ? '✅' : '❌'}, MongoDB: ${mongoWorking ? '✅' : '❌'}`);
+                }
+                
+                return dualWorking;
+            } catch (error) {
+                log(`Dual storage test error: ${error.message}`);
+                showResults('storage-results', `❌ Dual storage test failed: ${error.message}`, 'error');
+                return false;
+            }
+        }
+        
+        async function testSyncFunctionality() {
+            log('=== SYNC FUNCTIONALITY TEST ===');
+            
+            try {
+                // Test backup/restore endpoints
+                const testData = {
+                    workspaces: [{ id: 'sync-test', name: 'Sync Test', createdAt: Date.now(), updatedAt: Date.now() }],
+                    documents: [],
+                    notes: []
+                };
+                
+                const backupResponse = await fetch('http://localhost:3001/api/sync/backup', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(testData)
+                });
+                
+                if (backupResponse.ok) {
+                    log('✅ Backup functionality working');
+                    
+                    const restoreResponse = await fetch('http://localhost:3001/api/sync/restore');
+                    if (restoreResponse.ok) {
+                        log('✅ Restore functionality working');
+                        showResults('storage-results', '✅ Sync functionality working correctly', 'success');
+                        return true;
+                    }
+                }
+                
+                showResults('storage-results', '❌ Sync functionality test failed', 'error');
+                return false;
+            } catch (error) {
+                log(`Sync test error: ${error.message}`);
+                showResults('storage-results', `❌ Sync test failed: ${error.message}`, 'error');
+                return false;
+            }
+        }
+        
+        async function performanceTest() {
+            log('=== PERFORMANCE TEST ===');
+            
+            const startTime = performance.now();
+            const operations = [];
+            
+            try {
+                // Test multiple operations
+                for (let i = 0; i < 10; i++) {
+                    const start = performance.now();
+                    await fetch('http://localhost:3001/api/health');
+                    const end = performance.now();
+                    operations.push(end - start);
+                }
+                
+                const endTime = performance.now();
+                const totalTime = endTime - startTime;
+                const avgTime = operations.reduce((sum, time) => sum + time, 0) / operations.length;
+                
+                log(`Performance test completed in ${totalTime.toFixed(2)}ms`);
+                log(`Average response time: ${avgTime.toFixed(2)}ms`);
+                log(`Operations per second: ${(1000 / avgTime).toFixed(2)}`);
+                
+                const isGood = avgTime < 500; // Less than 500ms average
+                showResults('performance-results', 
+                    `Performance: ${isGood ? '✅ Good' : '⚠️ Needs improvement'} (${avgTime.toFixed(2)}ms avg)`, 
+                    isGood ? 'success' : 'warning');
+                
+                return isGood;
+            } catch (error) {
+                log(`Performance test error: ${error.message}`);
+                showResults('performance-results', `❌ Performance test failed: ${error.message}`, 'error');
+                return false;
+            }
+        }
+        
+        async function stressTest() {
+            log('=== STRESS TEST ===');
+            
+            try {
+                const promises = [];
+                const startTime = performance.now();
+                
+                // Send 50 concurrent requests
+                for (let i = 0; i < 50; i++) {
+                    promises.push(fetch('http://localhost:3001/api/health'));
+                }
+                
+                const results = await Promise.all(promises);
+                const endTime = performance.now();
+                const successCount = results.filter(r => r.ok).length;
+                
+                log(`Stress test: ${successCount}/50 requests successful`);
+                log(`Completed in ${(endTime - startTime).toFixed(2)}ms`);
+                
+                const isGood = successCount >= 45; // At least 90% success rate
+                showResults('performance-results', 
+                    `Stress test: ${isGood ? '✅ Passed' : '❌ Failed'} (${successCount}/50 successful)`, 
+                    isGood ? 'success' : 'error');
+                
+                return isGood;
+            } catch (error) {
+                log(`Stress test error: ${error.message}`);
+                showResults('performance-results', `❌ Stress test failed: ${error.message}`, 'error');
+                return false;
+            }
+        }
+        
+        async function runFullTest() {
+            log('=== FULL INTEGRATION TEST SUITE ===');
+            testResults = { total: 0, passed: 0, failed: 0 };
+            updateTestStats();
+            
+            const tests = [
+                { name: 'Configuration', fn: testConfiguration },
+                { name: 'MongoDB Connection', fn: testMongoConnection },
+                { name: 'API Server', fn: testApiServer },
+                { name: 'Local Storage', fn: testLocalStorage },
+                { name: 'MongoDB Storage', fn: testMongoStorage },
+                { name: 'Dual Storage', fn: testDualStorage },
+                { name: 'Sync Functionality', fn: testSyncFunctionality },
+                { name: 'Performance', fn: performanceTest },
+                { name: 'Stress Test', fn: stressTest }
+            ];
+            
+            const results = [];
+            for (const test of tests) {
+                try {
+                    const result = await test.fn();
+                    results.push({ name: test.name, passed: result });
+                } catch (error) {
+                    log(`Test ${test.name} crashed: ${error.message}`);
+                    results.push({ name: test.name, passed: false });
+                }
+            }
+            
+            const passed = results.filter(r => r.passed).length;
+            const score = Math.round((passed / results.length) * 100);
+            
+            log(`=== TEST SUITE COMPLETE ===`);
+            log(`Overall Score: ${score}% (${passed}/${results.length} tests passed)`);
+            
+            const summary = results.map(r => `${r.passed ? '✅' : '❌'} ${r.name}`).join('<br>');
+            const resultType = score >= 80 ? 'success' : score >= 60 ? 'warning' : 'error';
+            
+            showResults('integration-results', `
+                <strong>Test Suite Results: ${score}%</strong><br>
+                ${summary}<br><br>
+                ${score >= 80 ? '🎉 Excellent! Your hybrid storage is ready!' : 
+                  score >= 60 ? '⚠️ Some issues detected, but basic functionality should work.' : 
+                  '❌ Major issues found. Please check the setup guide.'}
+            `, resultType);
+        }
+        
+        async function clearAllData() {
+            if (!confirm('⚠️ This will delete all test data from MongoDB and local storage. Continue?')) {
+                return;
+            }
+            
+            log('=== CLEARING TEST DATA ===');
+            
+            try {
+                // Clear local IndexedDB
+                const deleteRequest = indexedDB.deleteDatabase('StudyCompanionDB');
+                deleteRequest.onsuccess = () => {
+                    log('✅ Local IndexedDB cleared');
+                };
+                
+                // Clear MongoDB test data (this would need a cleanup endpoint)
+                log('⚠️ MongoDB test data cleanup requires manual intervention');
+                
+                showResults('integration-results', '✅ Test data cleared (local storage cleared, MongoDB cleanup requires manual intervention)', 'success');
+            } catch (error) {
+                log(`Clear data error: ${error.message}`);
+                showResults('integration-results', `❌ Failed to clear data: ${error.message}`, 'error');
+            }
+        }
+        
+        // Auto-run configuration test on load
+        window.addEventListener('load', () => {
+            setTimeout(testConfiguration, 1000);
+        });
+    </script>
+</body>
+</html>

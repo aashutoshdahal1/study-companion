@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Check Notes Status</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .section { margin: 20px 0; padding: 15px; border: 1px solid #ccc; border-radius: 5px; }
+        .doc-item { margin: 5px 0; padding: 10px; background: #f5f5f5; cursor: pointer; }
+        .doc-item:hover { background: #e0e0e0; }
+        .notes-content { margin: 10px 0; padding: 10px; background: #f9f9f9; border-left: 3px solid #007acc; }
+        button { padding: 10px 15px; margin: 5px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>Notes Status Check</h1>
+    
+    <div class="section">
+        <h2>Current Status</h2>
+        <div id="status">Loading...</div>
+    </div>
+    
+    <div class="section">
+        <h2>Available Documents</h2>
+        <div id="documents">Loading...</div>
+        <button onclick="loadData()">Refresh</button>
+    </div>
+    
+    <div class="section">
+        <h2>All Notes in Database</h2>
+        <div id="all-notes">Loading...</div>
+    </div>
+    
+    <script>
+        const DB_NAME = "StudyCompanionDB";
+        const DB_VERSION = 5;
+        
+        function open() {
+            return new Promise((resolve, reject) => {
+                const req = indexedDB.open(DB_NAME, DB_VERSION);
+                req.onsuccess = () => resolve(req.result);
+                req.onerror = () => reject(req.error);
+            });
+        }
+        
+        function tx(store, mode, fn) {
+            return open().then(db => 
+                new Promise((resolve, reject) => {
+                    if (!db.objectStoreNames.contains(store)) {
+                        reject(new Error(`Store "${store}" not found`));
+                        return;
+                    }
+                    const t = db.transaction(store, mode);
+                    const req = fn(t.objectStore(store));
+                    req.onsuccess = () => resolve(req.result);
+                    req.onerror = () => reject(req.error);
+                })
+            );
+        }
+        
+        async function loadData() {
+            try {
+                // Get all documents
+                const allDocs = await tx('docs', 'readonly', s => s.getAll());
+                
+                // Get all notes
+                const allNotes = await tx('notes', 'readonly', s => s.getAll());
+                
+                // Display documents
+                const docsDiv = document.getElementById('documents');
+                docsDiv.innerHTML = allDocs.length === 0 
+                    ? '<p>No documents found. Upload some documents first!</p>'
+                    : allDocs.map(doc => `
+                        <div class="doc-item" onclick="selectDoc('${doc.id}')">
+                            <strong>${doc.name}</strong><br>
+                            Type: ${doc.type} | ID: ${doc.id}<br>
+                            <small>Created: ${new Date(doc.createdAt).toLocaleString()}</small>
+                        </div>
+                    `).join('');
+                
+                // Display all notes
+                const notesDiv = document.getElementById('all-notes');
+                if (allNotes.length === 0) {
+                    notesDiv.innerHTML = '<p>No notes found in database.</p>';
+                } else {
+                    notesDiv.innerHTML = allNotes.map(note => `
+                        <div class="notes-content">
+                            <strong>Document ID: ${note.docId}</strong><br>
+                            <strong>Updated: ${new Date(note.updatedAt).toLocaleString()}</strong><br>
+                            <div style="margin-top: 10px;">
+                                <strong>Notes Content:</strong><br>
+                                <div style="background: white; padding: 10px; border: 1px solid #ddd;">
+                                    ${note.html || 'No HTML content'}
+                                </div>
+                            </div>
+                        </div>
+                    `).join('');
+                }
+                
+                // Update status
+                document.getElementById('status').innerHTML = `
+                    <p>Documents: ${allDocs.length}</p>
+                    <p>Notes: ${allNotes.length}</p>
+                    <p><strong>To see notes in the app:</strong> Select a document from the list above in the main app.</p>
+                `;
+                
+            } catch (error) {
+                console.error('Error:', error);
+                document.getElementById('status').innerHTML = `<p style="color: red;">Error: ${error.message}</p>`;
+            }
+        }
+        
+        function selectDoc(docId) {
+            // Store the selected document ID for the main app to use
+            localStorage.setItem('last-selected-doc-id', docId);
+            alert(`Document ${docId} selected! Refresh the main app and this document should be selected automatically.`);
+        }
+        
+        // Auto-load data
+        loadData();
+        
+        // Check if there's a stored document ID
+        const storedId = localStorage.getItem('last-selected-doc-id');
+        if (storedId) {
+            setTimeout(() => {
+                alert(`Previously selected document: ${storedId}. Try refreshing the main app.`);
+            }, 1000);
+        }
+    </script>
+</body>
+</html>

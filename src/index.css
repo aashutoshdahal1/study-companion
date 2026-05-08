@@ -1,10 +1,10 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
 /* Import syntax highlighting and editable content styles */
 @import './styles/syntax-highlighting.css';
 @import './styles/editable-content.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
 @layer base {
   :root {

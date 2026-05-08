@@ -365,17 +365,23 @@ export const PasteMetadata = Extension.create({
 });
 
 /**
- * Export all enhanced extensions
+ * Export enhanced extensions that don't conflict with StarterKit
  */
 export const enhancedExtensions = [
-  EnhancedCodeBlock,
-  EnhancedLink,
   EnhancedTable,
   EnhancedHighlight,
   PasteMetadata,
   TableRow,
   TableCell,
   TableHeader,
+];
+
+/**
+ * Export enhanced extensions that replace StarterKit ones
+ */
+export const enhancedReplacements = [
+  EnhancedCodeBlock,
+  EnhancedLink,
 ];
 
 /**

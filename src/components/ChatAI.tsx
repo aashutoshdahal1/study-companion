@@ -33,7 +33,7 @@ export function ChatAI({ isVisible, onToggle, onInsertToNotes }: ChatAIProps) {
   const [selectedChatbot, setSelectedChatbot] = useState<'zai' | 'deepai'>('zai');
   const [deepaiModel, setDeepaiModel] = useState('standard');
   const [deepaiTools, setDeepaiTools] = useState(['image_generator', 'image_editor']);
-  const [deepaiProxyPort, setDeepaiProxyPort] = useState("8789");
+  const [deepaiProxyPort, setDeepaiProxyPort] = useState("8788");
   const [deepaiProxyStatus, setDeepaiProxyStatus] = useState<'online' | 'offline' | 'checking'>('checking');
   
   const messagesEndRef = useRef<HTMLDivElement>(null);

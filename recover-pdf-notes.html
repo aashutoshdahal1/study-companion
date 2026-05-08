@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>PDF Notes Recovery</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .section { margin: 20px 0; padding: 20px; background: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .doc-item { margin: 10px 0; padding: 15px; background: #f8f9fa; border-left: 4px solid #007acc; cursor: pointer; border-radius: 4px; }
+        .doc-item:hover { background: #e9ecef; }
+        .pdf-item { border-left-color: #dc3545; }
+        .notes-content { margin: 10px 0; padding: 15px; background: #f9f9f9; border-left: 3px solid #28a745; border-radius: 4px; }
+        .empty-state { text-align: center; padding: 40px; color: #666; }
+        button { padding: 12px 20px; margin: 5px; cursor: pointer; background: #007acc; color: white; border: none; border-radius: 4px; }
+        button:hover { background: #0056b3; }
+        .warning { background: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 4px; margin: 10px 0; }
+        .success { background: #d4edda; border: 1px solid #c3e6cb; padding: 15px; border-radius: 4px; margin: 10px 0; }
+        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0; }
+        .stat-card { background: #007acc; color: white; padding: 20px; border-radius: 8px; text-align: center; }
+        .stat-number { font-size: 2em; font-weight: bold; }
+        .stat-label { font-size: 0.9em; opacity: 0.9; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📄 PDF Notes Recovery Tool</h1>
+        
+        <div class="warning">
+            <strong>⚠️ Important:</strong> This tool will help you recover your missing PDF notes. Your documents and notes should still be in the database - we just need to make them visible again.
+        </div>
+        
+        <div class="section">
+            <h2>📊 Database Statistics</h2>
+            <div class="stats" id="stats">
+                <div class="stat-card">
+                    <div class="stat-number" id="doc-count">-</div>
+                    <div class="stat-label">Documents</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="pdf-count">-</div>
+                    <div class="stat-label">PDF Documents</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="notes-count">-</div>
+                    <div class="stat-label">Notes</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="workspace-count">-</div>
+                    <div class="stat-label">Workspaces</div>
+                </div>
+            </div>
+            <button onclick="loadData()">🔄 Refresh Data</button>
+        </div>
+        
+        <div class="section">
+            <h2>📁 All Documents (Click to Select)</h2>
+            <div id="documents">Loading...</div>
+        </div>
+        
+        <div class="section">
+            <h2>📝 All Notes in Database</h2>
+            <div id="all-notes">Loading...</div>
+        </div>
+        
+        <div class="section">
+            <h2>🔧 Recovery Actions</h2>
+            <button onclick="autoSelectFirstPDF()">📄 Auto-Select First PDF</button>
+            <button onclick="clearStorageAndReload()">🧹 Clear App Storage & Reload</button>
+            <button onclick="exportData()">💾 Export Database Info</button>
+        </div>
+        
+        <div id="status" class="section" style="display: none;">
+            <h2>📋 Status</h2>
+            <div id="status-content"></div>
+        </div>
+    </div>
+    
+    <script>
+        const DB_NAME = "StudyCompanionDB";
+        const DB_VERSION = 5;
+        
+        function open() {
+            return new Promise((resolve, reject) => {
+                const req = indexedDB.open(DB_NAME, DB_VERSION);
+                req.onsuccess = () => resolve(req.result);
+                req.onerror = () => reject(req.error);
+            });
+        }
+        
+        function tx(store, mode, fn) {
+            return open().then(db => 
+                new Promise((resolve, reject) => {
+                    if (!db.objectStoreNames.contains(store)) {
+                        reject(new Error(`Store "${store}" not found`));
+                        return;
+                    }
+                    const t = db.transaction(store, mode);
+                    const req = fn(t.objectStore(store));
+                    req.onsuccess = () => resolve(req.result);
+                    req.onerror = () => reject(req.error);
+                })
+            );
+        }
+        
+        async function loadData() {
+            try {
+                showStatus('Loading database...', 'info');
+                
+                // Get all data
+                const [allDocs, allNotes, allWorkspaces] = await Promise.all([
+                    tx('docs', 'readonly', s => s.getAll()),
+                    tx('notes', 'readonly', s => s.getAll()),
+                    tx('workspaces', 'readonly', s => s.getAll())
+                ]);
+                
+                // Update stats
+                document.getElementById('doc-count').textContent = allDocs.length;
+                document.getElementById('pdf-count').textContent = allDocs.filter(doc => doc.type === 'pdf').length;
+                document.getElementById('notes-count').textContent = allNotes.length;
+                document.getElementById('workspace-count').textContent = allWorkspaces.length;
+                
+                // Display documents
+                const docsDiv = document.getElementById('documents');
+                if (allDocs.length === 0) {
+                    docsDiv.innerHTML = '<div class="empty-state">❌ No documents found in database!</div>';
+                } else {
+                    docsDiv.innerHTML = allDocs.map(doc => {
+                        const isPdf = doc.type === 'pdf';
+                        const hasNotes = allNotes.some(note => note.docId === doc.id);
+                        return `
+                            <div class="doc-item ${isPdf ? 'pdf-item' : ''}" onclick="selectDoc('${doc.id}')">
+                                <div style="display: flex; justify-content: space-between; align-items: start;">
+                                    <div>
+                                        <strong>${isPdf ? '📄' : '📄'} ${doc.name}</strong><br>
+                                        <small>Type: ${doc.type} | ID: ${doc.id}</small><br>
+                                        <small>Created: ${new Date(doc.createdAt).toLocaleString()}</small><br>
+                                        <small>Workspace: ${doc.workspaceId || 'None'}</small>
+                                    </div>
+                                    <div style="text-align: right;">
+                                        ${hasNotes ? '<span style="color: #28a745;">✅ Has Notes</span>' : '<span style="color: #dc3545;">❌ No Notes</span>'}
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    }).join('');
+                }
+                
+                // Display notes
+                const notesDiv = document.getElementById('all-notes');
+                if (allNotes.length === 0) {
+                    notesDiv.innerHTML = '<div class="empty-state">❌ No notes found in database!</div>';
+                } else {
+                    notesDiv.innerHTML = allNotes.map(note => {
+                        const doc = allDocs.find(d => d.id === note.docId);
+                        return `
+                            <div class="notes-content">
+                                <strong>📄 Document: ${doc ? doc.name : 'Unknown Document'}</strong><br>
+                                <strong>📝 Notes ID: ${note.docId}</strong><br>
+                                <strong>📅 Updated: ${new Date(note.updatedAt).toLocaleString()}</strong><br>
+                                <div style="margin-top: 10px;">
+                                    <strong>Content Preview:</strong><br>
+                                    <div style="background: white; padding: 10px; border: 1px solid #ddd; border-radius: 4px; max-height: 200px; overflow-y: auto;">
+                                        ${note.html ? note.html.substring(0, 500) + (note.html.length > 500 ? '...' : '') : 'No HTML content'}
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    }).join('');
+                }
+                
+                // Show recovery suggestions
+                let suggestions = [];
+                if (allDocs.length === 0) {
+                    suggestions.push('❌ No documents found - you may need to re-upload your PDFs');
+                } else if (allDocs.filter(doc => doc.type === 'pdf').length === 0) {
+                    suggestions.push('❌ No PDF documents found');
+                } else if (allNotes.length === 0) {
+                    suggestions.push('❌ No notes found - your notes may have been lost');
+                } else {
+                    suggestions.push('✅ Documents and notes found! Click on a PDF document above to restore access.');
+                }
+                
+                showStatus(suggestions.join('<br>'), allDocs.length > 0 && allNotes.length > 0 ? 'success' : 'warning');
+                
+            } catch (error) {
+                console.error('Error:', error);
+                showStatus(`❌ Error: ${error.message}`, 'error');
+            }
+        }
+        
+        function selectDoc(docId) {
+            localStorage.setItem('last-selected-doc-id', docId);
+            localStorage.setItem('force-doc-selection', 'true');
+            showStatus(`✅ Document ${docId} selected! Refresh the main app to see your notes.`, 'success');
+        }
+        
+        function autoSelectFirstPDF() {
+            tx('docs', 'readonly', s => s.getAll()).then(allDocs => {
+                const pdfs = allDocs.filter(doc => doc.type === 'pdf');
+                if (pdfs.length > 0) {
+                    selectDoc(pdfs[0].id);
+                } else {
+                    showStatus('❌ No PDF documents found to auto-select', 'error');
+                }
+            }).catch(error => {
+                showStatus(`❌ Error: ${error.message}`, 'error');
+            });
+        }
+        
+        function clearStorageAndReload() {
+            if (confirm('This will clear the app\'s localStorage and reload the page. Your database data will NOT be deleted.')) {
+                localStorage.clear();
+                showStatus('✅ LocalStorage cleared. Refresh the main app.', 'success');
+                setTimeout(() => {
+                    window.open('/', '_blank');
+                }, 1000);
+            }
+        }
+        
+        function exportData() {
+            Promise.all([
+                tx('docs', 'readonly', s => s.getAll()),
+                tx('notes', 'readonly', s => s.getAll()),
+                tx('workspaces', 'readonly', s => s.getAll())
+            ]).then(([docs, notes, workspaces]) => {
+                const data = {
+                    timestamp: new Date().toISOString(),
+                    stats: {
+                        documents: docs.length,
+                        pdfs: docs.filter(doc => doc.type === 'pdf').length,
+                        notes: notes.length,
+                        workspaces: workspaces.length
+                    },
+                    docs: docs,
+                    notes: notes,
+                    workspaces: workspaces
+                };
+                
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `study-companion-backup-${new Date().toISOString().split('T')[0]}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+                
+                showStatus('✅ Database info exported!', 'success');
+            }).catch(error => {
+                showStatus(`❌ Export error: ${error.message}`, 'error');
+            });
+        }
+        
+        function showStatus(message, type = 'info') {
+            const statusDiv = document.getElementById('status');
+            const statusContent = document.getElementById('status-content');
+            
+            statusDiv.style.display = 'block';
+            statusContent.innerHTML = message;
+            
+            // Remove existing classes
+            statusDiv.className = 'section';
+            if (type === 'success') statusDiv.classList.add('success');
+            else if (type === 'error' || type === 'warning') statusDiv.classList.add('warning');
+        }
+        
+        // Auto-load data
+        loadData();
+        
+        // Check for stored document
+        const storedId = localStorage.getItem('last-selected-doc-id');
+        if (storedId) {
+            setTimeout(() => {
+                showStatus(`ℹ️ Previously selected document: ${storedId}`, 'info');
+            }, 1000);
+        }
+    </script>
+</body>
+</html>

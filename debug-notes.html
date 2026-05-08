@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug Notes Storage</title>
+</head>
+<body>
+    <h1>Notes Database Debug</h1>
+    <div id="output"></div>
+    
+    <script>
+        // Open the same database
+        const DB_NAME = "StudyCompanionDB";
+        const DB_VERSION = 5;
+        
+        function open() {
+            return new Promise((resolve, reject) => {
+                const req = indexedDB.open(DB_NAME, DB_VERSION);
+                req.onupgradeneeded = () => {
+                    const db = req.result;
+                    console.log("Database upgrade complete");
+                };
+                req.onsuccess = () => {
+                    console.log("Database opened successfully");
+                    const db = req.result;
+                    console.log("Available stores:", Array.from(db.objectStoreNames));
+                    console.log("Database version:", db.version);
+                    resolve(db);
+                };
+                req.onerror = () => {
+                    console.error("Database error:", req.error);
+                    reject(req.error);
+                };
+            });
+        }
+        
+        function tx(store, mode, fn) {
+            return open().then(db => 
+                new Promise((resolve, reject) => {
+                    if (!db.objectStoreNames.contains(store)) {
+                        console.error(`Store "${store}" not found. Available stores:`, Array.from(db.objectStoreNames));
+                        reject(new Error(`Store "${store}" not found in database`));
+                        return;
+                    }
+                    
+                    const t = db.transaction(store, mode);
+                    const req = fn(t.objectStore(store));
+                    req.onsuccess = () => resolve(req.result);
+                    req.onerror = () => reject(req.error);
+                })
+            );
+        }
+        
+        async function debugNotes() {
+            try {
+                const output = document.getElementById('output');
+                
+                // Check all notes
+                const allNotes = await tx('notes', 'readonly', s => s.getAll());
+                console.log('All notes:', allNotes);
+                
+                // Check all docs
+                const allDocs = await tx('docs', 'readonly', s => s.getAll());
+                console.log('All docs:', allDocs);
+                
+                // Display results
+                output.innerHTML = `
+                    <h2>Notes in Database (${allNotes.length})</h2>
+                    <pre>${JSON.stringify(allNotes, null, 2)}</pre>
+                    
+                    <h2>Documents in Database (${allDocs.length})</h2>
+                    <pre>${JSON.stringify(allDocs, null, 2)}</pre>
+                `;
+                
+            } catch (error) {
+                console.error('Debug error:', error);
+                document.getElementById('output').innerHTML = `<p style="color: red;">Error: ${error.message}</p>`;
+            }
+        }
+        
+        // Run debug
+        debugNotes();
+    </script>
+</body>
+</html>

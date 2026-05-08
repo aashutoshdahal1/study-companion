@@ -1,5 +1,5 @@
 import { useEditor, EditorContent, Editor } from "@tiptap/react";
-import StarterKit from "@tiptap/starter-kit";
+import StarterKit from '@tiptap/starter-kit';
 import TipTapImage from "@tiptap/extension-image";
 import { useEffect, useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
@@ -21,8 +21,7 @@ import {
   X,
   Image,
 } from "lucide-react";
-import { handleRichPaste, shouldProcessAsRichContent, createPlainTextFallback } from "@/lib/rich-content-handler";
-import { enhancedExtensions, detectLanguage } from "@/lib/tiptap-extensions";
+import { enhancedExtensions, enhancedReplacements } from "@/lib/tiptap-extensions";
 import { EditableRichContent, EditableCodeBlock, EditableTable } from "@/components/EditableRichContent";
 
 interface GrammarCorrection {
@@ -262,8 +261,12 @@ export function NotesEditor({ value, onChange, onInsertPageTag }: NotesEditorPro
 
   const editor = useEditor({
     extensions: [
-      StarterKit,
+      StarterKit.configure({
+        codeBlock: false, // Disable built-in CodeBlock to use EnhancedCodeBlock
+        link: false,     // Disable built-in Link to use EnhancedLink
+      }),
       ...enhancedExtensions,
+      ...enhancedReplacements,
       TipTapImage.configure({
         allowBase64: true,
         HTMLAttributes: {
@@ -276,76 +279,6 @@ export function NotesEditor({ value, onChange, onInsertPageTag }: NotesEditorPro
       attributes: {
         class: "prose-notes focus:outline-none px-6 py-5 max-w-none",
         "data-placeholder": "Start writing your notes…",
-      },
-      handlePaste: (view, event, slice) => {
-        // Handle rich content paste
-        handleRichPaste(event).then(pastedContent => {
-          if (pastedContent && shouldProcessAsRichContent(pastedContent)) {
-            event.preventDefault();
-            
-            // Insert the processed HTML content
-            const { state, dispatch } = view;
-            const { from } = state.selection;
-            
-            // Create a transaction to insert the content
-            const tr = state.tr.insert(
-              from,
-              state.schema.text(pastedContent.text, [
-                state.schema.mark('pasteMetadata', {
-                  pasteSource: pastedContent.source,
-                  pasteTimestamp: Date.now()
-                })
-              ])
-            );
-            
-            dispatch(tr);
-            
-            // If there's HTML content, also insert it
-            if (pastedContent.html && pastedContent.html !== pastedContent.text) {
-              setTimeout(() => {
-                // Convert HTML to ProseMirror nodes and insert
-                const div = document.createElement('div');
-                div.innerHTML = pastedContent.html;
-                const nodes = [];
-                
-                div.childNodes.forEach(node => {
-                  if (node.nodeType === Node.ELEMENT_NODE) {
-                    const element = node as HTMLElement;
-                    // Handle different element types
-                    if (element.tagName === 'PRE' && element.querySelector('code')) {
-                      const codeEl = element.querySelector('code');
-                      const language = codeEl?.getAttribute('data-language') || detectLanguage(codeEl?.textContent || '');
-                      const codeContent = codeEl?.textContent || '';
-                      
-                      // Insert as code block
-                      if (editor) {
-                        editor.commands.setCodeBlock({ language });
-                        editor.commands.insertContent(codeContent);
-                      }
-                    } else if (element.tagName === 'TABLE') {
-                      // Handle table insertion
-                      if (editor) {
-                        editor.commands.insertContent(element.outerHTML);
-                      }
-                    } else {
-                      // Handle other elements
-                      if (editor) {
-                        editor.commands.insertContent(element.outerHTML);
-                      }
-                    }
-                  }
-                });
-              }, 0);
-            }
-            
-            return true;
-          }
-        }).catch(err => {
-          console.error('Error handling rich paste:', err);
-        });
-        
-        // Fall back to default paste handling
-        return false;
       },
     },
     onUpdate: ({ editor }) => {

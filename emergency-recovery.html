@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Emergency PDF Notes Recovery</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .section { margin: 20px 0; padding: 20px; background: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .error { background: #f8d7da; border: 1px solid #f5c6cb; padding: 15px; border-radius: 4px; margin: 10px 0; color: #721c24; }
+        .success { background: #d4edda; border: 1px solid #c3e6cb; padding: 15px; border-radius: 4px; margin: 10px 0; color: #155724; }
+        .warning { background: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 4px; margin: 10px 0; color: #856404; }
+        .info { background: #d1ecf1; border: 1px solid #bee5eb; padding: 15px; border-radius: 4px; margin: 10px 0; color: #0c5460; }
+        button { padding: 12px 20px; margin: 5px; cursor: pointer; background: #007acc; color: white; border: none; border-radius: 4px; }
+        button:hover { background: #0056b3; }
+        button.danger { background: #dc3545; }
+        button.danger:hover { background: #c82333; }
+        .log { background: #f8f9fa; padding: 15px; border-radius: 4px; font-family: monospace; font-size: 12px; max-height: 300px; overflow-y: auto; white-space: pre-wrap; }
+        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin: 20px 0; }
+        .stat-card { background: #007acc; color: white; padding: 20px; border-radius: 8px; text-align: center; }
+        .stat-number { font-size: 2em; font-weight: bold; }
+        .stat-label { font-size: 0.9em; opacity: 0.9; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚨 Emergency PDF Notes Recovery</h1>
+        
+        <div class="error">
+            <strong>⚠️ Database Error Detected:</strong> The recovery tool couldn't access the 'docs' store. This indicates a database issue that we need to fix.
+        </div>
+        
+        <div class="section">
+            <h2>🔍 Database Diagnosis</h2>
+            <button onclick="diagnoseDatabase()">🔬 Run Database Diagnosis</button>
+            <button onclick="listAllDatabases()">📋 List All Databases</button>
+            <button onclick="checkDatabaseVersion()">🔢 Check Database Version</button>
+            <div id="diagnosis-results"></div>
+        </div>
+        
+        <div class="section">
+            <h2>🛠️ Recovery Options</h2>
+            <button onclick="attemptDirectAccess()">🔓 Try Direct Database Access</button>
+            <button onclick="recreateDatabase()">🔄 Recreate Database Structure</button>
+            <button onclick="clearAndReset()" class="danger">🧹 Clear Everything & Start Fresh</button>
+            <div id="recovery-results"></div>
+        </div>
+        
+        <div class="section">
+            <h2>📊 Manual Recovery</h2>
+            <button onclick="searchForPDFs()">🔍 Search for PDF Files</button>
+            <button onclick="exportAllData()">💾 Export All Available Data</button>
+            <button onclick="importBackup()">📥 Import Backup (if you have one)</button>
+            <div id="manual-results"></div>
+        </div>
+        
+        <div class="section">
+            <h2>📝 Operation Log</h2>
+            <div id="log" class="log">Ready to start recovery operations...</div>
+        </div>
+    </div>
+    
+    <script>
+        let log = document.getElementById('log');
+        
+        function addLog(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const prefix = type === 'error' ? '❌' : type === 'success' ? '✅' : type === 'warning' ? '⚠️' : 'ℹ️';
+            log.textContent += `[${timestamp}] ${prefix} ${message}\n`;
+            log.scrollTop = log.scrollHeight;
+        }
+        
+        function showResults(elementId, content, type = 'info') {
+            const div = document.getElementById(elementId);
+            div.innerHTML = `<div class="${type}">${content}</div>`;
+        }
+        
+        async function diagnoseDatabase() {
+            addLog('Starting database diagnosis...');
+            try {
+                // Check if we can open the database
+                const request = indexedDB.open('StudyCompanionDB', 5);
+                
+                request.onerror = () => {
+                    addLog(`Failed to open database: ${request.error}`, 'error');
+                    showResults('diagnosis-results', '❌ Database cannot be opened', 'error');
+                };
+                
+                request.onsuccess = () => {
+                    const db = request.result;
+                    addLog(`Database opened successfully. Version: ${db.version}`);
+                    addLog(`Available stores: ${Array.from(db.objectStoreNames).join(', ')}`);
+                    
+                    const stores = Array.from(db.objectStoreNames);
+                    const hasDocs = stores.includes('docs');
+                    const hasNotes = stores.includes('notes');
+                    
+                    let diagnosis = `
+                        <strong>Database Status:</strong><br>
+                        ✅ Database opens successfully<br>
+                        ✅ Version: ${db.version}<br>
+                        ✅ Stores found: ${stores.length}<br>
+                        ${hasDocs ? '✅' : '❌'} 'docs' store: ${hasDocs ? 'Found' : 'Missing'}<br>
+                        ${hasNotes ? '✅' : '❌'} 'notes' store: ${hasNotes ? 'Found' : 'Missing'}<br>
+                    `;
+                    
+                    if (!hasDocs || !hasNotes) {
+                        diagnosis += '<br><strong>⚠️ Problem: Missing required stores. Need to recreate database.</strong>';
+                    } else {
+                        diagnosis += '<br><strong>✅ Database structure looks good!</strong>';
+                    }
+                    
+                    showResults('diagnosis-results', diagnosis, hasDocs && hasNotes ? 'success' : 'warning');
+                    db.close();
+                };
+                
+                request.onupgradeneeded = () => {
+                    addLog('Database upgrade needed - this might indicate version mismatch');
+                };
+                
+            } catch (error) {
+                addLog(`Diagnosis error: ${error.message}`, 'error');
+                showResults('diagnosis-results', `❌ Diagnosis failed: ${error.message}`, 'error');
+            }
+        }
+        
+        function listAllDatabases() {
+            addLog('Listing all IndexedDB databases...');
+            try {
+                if ('databases' in indexedDB) {
+                    indexedDB.databases().then(databases => {
+                        addLog(`Found ${databases.length} databases`);
+                        let list = '<strong>Available Databases:</strong><br>';
+                        databases.forEach(db => {
+                            list += `📁 ${db.name} (v${db.version || 'unknown'})<br>`;
+                        });
+                        showResults('diagnosis-results', list, 'info');
+                    }).catch(error => {
+                        addLog(`Failed to list databases: ${error.message}`, 'error');
+                    });
+                } else {
+                    addLog('Browser does not support database listing');
+                    showResults('diagnosis-results', '⚠️ Browser does not support database listing', 'warning');
+                }
+            } catch (error) {
+                addLog(`Error listing databases: ${error.message}`, 'error');
+            }
+        }
+        
+        async function checkDatabaseVersion() {
+            addLog('Checking database version information...');
+            try {
+                const request = indexedDB.open('StudyCompanionDB');
+                request.onsuccess = () => {
+                    const db = request.result;
+                    addLog(`Current database version: ${db.version}`);
+                    addLog(`Expected version: 5`);
+                    
+                    if (db.version < 5) {
+                        showResults('diagnosis-results', `⚠️ Database version ${db.version} is older than expected (5). Upgrade needed.`, 'warning');
+                    } else if (db.version > 5) {
+                        showResults('diagnosis-results', `⚠️ Database version ${db.version} is newer than expected (5). Possible compatibility issues.`, 'warning');
+                    } else {
+                        showResults('diagnosis-results', `✅ Database version is correct (${db.version})`, 'success');
+                    }
+                    db.close();
+                };
+                request.onerror = () => {
+                    addLog(`Failed to check version: ${request.error}`, 'error');
+                };
+            } catch (error) {
+                addLog(`Version check error: ${error.message}`, 'error');
+            }
+        }
+        
+        async function attemptDirectAccess() {
+            addLog('Attempting direct database access...');
+            try {
+                // Try to access each store individually
+                const stores = ['docs', 'notes', 'workspaces', 'blobs', 'flashcards'];
+                const results = [];
+                
+                for (const storeName of stores) {
+                    try {
+                        const request = indexedDB.open('StudyCompanionDB', 5);
+                        request.onsuccess = () => {
+                            const db = request.result;
+                            if (db.objectStoreNames.contains(storeName)) {
+                                const transaction = db.transaction(storeName, 'readonly');
+                                const store = transaction.objectStore(storeName);
+                                const getRequest = store.getAll();
+                                
+                                getRequest.onsuccess = () => {
+                                    const data = getRequest.result;
+                                    addLog(`✅ ${storeName}: ${data.length} items found`);
+                                    results.push(`✅ ${storeName}: ${data.length} items`);
+                                    
+                                    if (results.length === stores.length) {
+                                        showResults('recovery-results', `<strong>Direct Access Results:</strong><br>${results.join('<br>')}`, 'success');
+                                    }
+                                };
+                                
+                                getRequest.onerror = () => {
+                                    addLog(`❌ ${storeName}: Failed to read data`, 'error');
+                                    results.push(`❌ ${storeName}: Access failed`);
+                                };
+                            } else {
+                                addLog(`❌ ${storeName}: Store not found`, 'error');
+                                results.push(`❌ ${storeName}: Not found`);
+                            }
+                            db.close();
+                        };
+                        request.onerror = () => {
+                            addLog(`❌ Failed to open database for ${storeName}`, 'error');
+                        };
+                    } catch (error) {
+                        addLog(`❌ ${storeName}: ${error.message}`, 'error');
+                    }
+                }
+            } catch (error) {
+                addLog(`Direct access failed: ${error.message}`, 'error');
+                showResults('recovery-results', `❌ Direct access failed: ${error.message}`, 'error');
+            }
+        }
+        
+        async function recreateDatabase() {
+            if (!confirm('⚠️ This will recreate the database structure. Any existing data might be affected. Continue?')) {
+                return;
+            }
+            
+            addLog('Recreating database structure...');
+            try {
+                // Delete existing database
+                const deleteRequest = indexedDB.deleteDatabase('StudyCompanionDB');
+                deleteRequest.onsuccess = () => {
+                    addLog('✅ Old database deleted');
+                    
+                    // Create new database with proper structure
+                    const createRequest = indexedDB.open('StudyCompanionDB', 5);
+                    createRequest.onupgradeneeded = (event) => {
+                        const db = event.target.result;
+                        
+                        // Create all required stores
+                        if (!db.objectStoreNames.contains('docs')) {
+                            db.createObjectStore('docs', { keyPath: 'id' });
+                            addLog('✅ Created docs store');
+                        }
+                        if (!db.objectStoreNames.contains('notes')) {
+                            db.createObjectStore('notes', { keyPath: 'docId' });
+                            addLog('✅ Created notes store');
+                        }
+                        if (!db.objectStoreNames.contains('workspaces')) {
+                            db.createObjectStore('workspaces', { keyPath: 'id' });
+                            addLog('✅ Created workspaces store');
+                        }
+                        if (!db.objectStoreNames.contains('blobs')) {
+                            db.createObjectStore('blobs', { keyPath: 'id' });
+                            addLog('✅ Created blobs store');
+                        }
+                        if (!db.objectStoreNames.contains('flashcards')) {
+                            db.createObjectStore('flashcards', { keyPath: 'docId' });
+                            addLog('✅ Created flashcards store');
+                        }
+                    };
+                    
+                    createRequest.onsuccess = () => {
+                        addLog('✅ Database recreated successfully');
+                        showResults('recovery-results', '✅ Database structure recreated. You will need to re-upload your PDF files.', 'success');
+                        createRequest.result.close();
+                    };
+                    
+                    createRequest.onerror = () => {
+                        addLog(`❌ Failed to recreate database: ${createRequest.error}`, 'error');
+                        showResults('recovery-results', `❌ Database recreation failed: ${createRequest.error}`, 'error');
+                    };
+                };
+                
+                deleteRequest.onerror = () => {
+                    addLog(`❌ Failed to delete database: ${deleteRequest.error}`, 'error');
+                };
+                
+            } catch (error) {
+                addLog(`Database recreation error: ${error.message}`, 'error');
+                showResults('recovery-results', `❌ Recreation failed: ${error.message}`, 'error');
+            }
+        }
+        
+        function clearAndReset() {
+            if (!confirm('⚠️ This will delete ALL data and reset the application. Only do this if you have backups or are willing to start over. Continue?')) {
+                return;
+            }
+            
+            addLog('Clearing all application data...');
+            try {
+                // Clear localStorage
+                localStorage.clear();
+                addLog('✅ LocalStorage cleared');
+                
+                // Delete IndexedDB database
+                const deleteRequest = indexedDB.deleteDatabase('StudyCompanionDB');
+                deleteRequest.onsuccess = () => {
+                    addLog('✅ IndexedDB database deleted');
+                    showResults('recovery-results', '✅ All data cleared. Refresh the page to start fresh.', 'success');
+                };
+                deleteRequest.onerror = () => {
+                    addLog(`❌ Failed to delete database: ${deleteRequest.error}`, 'error');
+                };
+            } catch (error) {
+                addLog(`Clear operation failed: ${error.message}`, 'error');
+            }
+        }
+        
+        function searchForPDFs() {
+            addLog('Searching for PDF files in browser storage...');
+            // This is a placeholder - in a real scenario, we'd check various storage mechanisms
+            showResults('manual-results', '⚠️ PDF file search not available in this context. You may need to re-upload your PDF files.', 'warning');
+        }
+        
+        function exportAllData() {
+            addLog('Attempting to export any available data...');
+            showResults('manual-results', '⚠️ Data export not available due to database access issues. Consider recreating the database.', 'warning');
+        }
+        
+        function importBackup() {
+            addLog('Import backup function not implemented');
+            showResults('manual-results', '⚠️ Import backup not available. If you have a backup file, you may need manual restoration.', 'warning');
+        }
+        
+        // Auto-run diagnosis on load
+        window.addEventListener('load', () => {
+            setTimeout(diagnoseDatabase, 1000);
+        });
+    </script>
+</body>
+</html>

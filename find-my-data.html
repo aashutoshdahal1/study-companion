@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Find My Data - Manual Inspection</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .section { margin: 20px 0; padding: 20px; background: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .step { background: #e3f2fd; padding: 15px; margin: 10px 0; border-radius: 4px; border-left: 4px solid #2196f3; }
+        .warning { background: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 4px; margin: 10px 0; }
+        .success { background: #d4edda; border: 1px solid #c3e6cb; padding: 15px; border-radius: 4px; margin: 10px 0; }
+        .error { background: #f8d7da; border: 1px solid #f5c6cb; padding: 15px; border-radius: 4px; margin: 10px 0; }
+        button { padding: 12px 20px; margin: 5px; cursor: pointer; background: #007acc; color: white; border: none; border-radius: 4px; }
+        button:hover { background: #0056b3; }
+        .data-display { background: #f8f9fa; padding: 15px; border-radius: 4px; font-family: monospace; font-size: 12px; max-height: 400px; overflow-y: auto; white-space: pre-wrap; }
+        .browser-guide { background: #e8f5e8; padding: 15px; border-radius: 4px; margin: 10px 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 Find My Data - Manual Inspection Guide</h1>
+        
+        <div class="warning">
+            <strong>⚠️ Important:</strong> Your PDF notes data should be stored in your browser's IndexedDB. Let's help you find it manually.
+        </div>
+        
+        <div class="section">
+            <h2>📱 Browser Developer Tools Method</h2>
+            
+            <div class="step">
+                <strong>Step 1: Open Developer Tools</strong><br>
+                • Chrome/Edge: Press <kbd>F12</kbd> or <kbd>Ctrl+Shift+I</kbd> (Windows) / <kbd>Cmd+Option+I</kbd> (Mac)<br>
+                • Firefox: Press <kbd>F12</kbd> or <kbd>Ctrl+Shift+K</kbd> (Windows) / <kbd>Cmd+Option+K</kbd> (Mac)<br>
+                • Safari: Enable Developer Menu in Preferences, then <kbd>Cmd+Option+I</kbd>
+            </div>
+            
+            <div class="step">
+                <strong>Step 2: Go to Application/Storage Tab</strong><br>
+                • Chrome/Edge: Click "Application" tab → "Storage" → "IndexedDB"<br>
+                • Firefox: Click "Storage" tab → "IndexedDB"<br>
+                • Safari: Click "Storage" tab → "IndexedDB"
+            </div>
+            
+            <div class="step">
+                <strong>Step 3: Find StudyCompanionDB</strong><br>
+                Look for a database named "StudyCompanionDB" in the list
+            </div>
+            
+            <div class="step">
+                <strong>Step 4: Check the Stores</strong><br>
+                Expand StudyCompanionDB and look for these stores:<br>
+                • <strong>docs</strong> - Your PDF documents<br>
+                • <strong>notes</strong> - Your notes content<br>
+                • <strong>workspaces</strong> - Workspaces<br>
+                • <strong>blobs</strong> - File data<br>
+                • <strong>flashcards</strong> - Flashcard data
+            </div>
+            
+            <div class="step">
+                <strong>Step 5: Examine the Data</strong><br>
+                Click on each store to see the data inside. Your PDF notes should be in the 'docs' and 'notes' stores.
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>🔧 Quick Data Check Tool</h2>
+            <button onclick="checkAllDataSources()">🔍 Check All Data Sources</button>
+            <button onclick="inspectIndexedDB()">🗄️ Inspect IndexedDB Directly</button>
+            <button onclick="checkLocalStorage()">💾 Check LocalStorage</button>
+            <button onclick="checkSessionStorage()">🔄 Check SessionStorage</button>
+            <div id="data-results"></div>
+        </div>
+        
+        <div class="section">
+            <h2>📊 Data Analysis Results</h2>
+            <div id="analysis-results" class="data-display">Click "Check All Data Sources" above to see what data is available...</div>
+        </div>
+        
+        <div class="section">
+            <h2>🌐 Browser-Specific Instructions</h2>
+            
+            <div class="browser-guide">
+                <strong>Chrome/Edge:</strong><br>
+                1. Right-click → "Inspect"<br>
+                2. Go to "Application" tab<br>
+                3. Expand "IndexedDB"<br>
+                4. Click "StudyCompanionDB"
+            </div>
+            
+            <div class="browser-guide">
+                <strong>Firefox:</strong><br>
+                1. Right-click → "Inspect Element"<br>
+                2. Go to "Storage" tab<br>
+                3. Expand "IndexedDB"<br>
+                4. Click "StudyCompanionDB"
+            </div>
+            
+            <div class="browser-guide">
+                <strong>Safari:</strong><br>
+                1. Develop → Show Web Inspector<br>
+                2. Go to "Storage" tab<br>
+                3. Expand "IndexedDB"<br>
+                4. Click "StudyCompanionDB"
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>💾 Backup Your Data</h2>
+            <button onclick="exportAllFoundData()">📥 Export All Found Data</button>
+            <button onclick="createDataReport()">📋 Create Data Report</button>
+            <div id="backup-results"></div>
+        </div>
+    </div>
+    
+    <script>
+        let analysisDiv = document.getElementById('analysis-results');
+        let resultsDiv = document.getElementById('data-results');
+        
+        function log(message) {
+            const timestamp = new Date().toLocaleTimeString();
+            analysisDiv.textContent += `[${timestamp}] ${message}\n`;
+        }
+        
+        function showResults(elementId, content, type = 'info') {
+            const div = document.getElementById(elementId);
+            div.innerHTML = `<div class="${type}">${content}</div>`;
+        }
+        
+        async function checkAllDataSources() {
+            log('=== CHECKING ALL DATA SOURCES ===');
+            analysisDiv.textContent = '';
+            
+            // Check IndexedDB
+            await inspectIndexedDB();
+            
+            // Check LocalStorage
+            await checkLocalStorage();
+            
+            // Check SessionStorage
+            await checkSessionStorage();
+            
+            // Check for any other storage mechanisms
+            checkOtherStorage();
+            
+            log('=== DATA SOURCE CHECK COMPLETE ===');
+        }
+        
+        async function inspectIndexedDB() {
+            log('Checking IndexedDB...');
+            
+            try {
+                // List all databases first
+                if ('databases' in indexedDB) {
+                    const databases = await indexedDB.databases();
+                    log(`Found ${databases.length} IndexedDB databases:`);
+                    databases.forEach(db => {
+                        log(`  - ${db.name} (v${db.version || 'unknown'})`);
+                    });
+                }
+                
+                // Try to open StudyCompanionDB
+                const request = indexedDB.open('StudyCompanionDB');
+                
+                request.onsuccess = () => {
+                    const db = request.result;
+                    log(`✅ StudyCompanionDB opened successfully`);
+                    log(`Database version: ${db.version}`);
+                    log(`Available stores: ${Array.from(db.objectStoreNames).join(', ')}`);
+                    
+                    const stores = Array.from(db.objectStoreNames);
+                    if (stores.length === 0) {
+                        log('❌ NO STORES FOUND - Database is empty!');
+                        showResults('data-results', '❌ StudyCompanionDB exists but has no stores (empty database)', 'error');
+                    } else {
+                        log('✅ Stores found, checking data...');
+                        checkStoreData(db, stores);
+                    }
+                    db.close();
+                };
+                
+                request.onerror = () => {
+                    log(`❌ Failed to open StudyCompanionDB: ${request.error}`);
+                    showResults('data-results', `❌ Cannot access StudyCompanionDB: ${request.error}`, 'error');
+                };
+                
+                request.onupgradeneeded = () => {
+                    log('⚠️ Database upgrade needed - version mismatch');
+                };
+                
+            } catch (error) {
+                log(`❌ IndexedDB check failed: ${error.message}`);
+            }
+        }
+        
+        async function checkStoreData(db, stores) {
+            let totalData = 0;
+            let storeInfo = [];
+            
+            for (const storeName of stores) {
+                try {
+                    const transaction = db.transaction(storeName, 'readonly');
+                    const store = transaction.objectStore(storeName);
+                    const countRequest = store.count();
+                    
+                    countRequest.onsuccess = () => {
+                        const count = countRequest.result;
+                        totalData += count;
+                        storeInfo.push(`${storeName}: ${count} items`);
+                        log(`  ${storeName}: ${count} items`);
+                        
+                        if (storeInfo.length === stores.length) {
+                            if (totalData === 0) {
+                                log('❌ ALL STORES ARE EMPTY - No data found!');
+                                showResults('data-results', `❌ Database has stores but no data. Total: ${totalData} items across ${stores.length} stores`, 'error');
+                            } else {
+                                log(`✅ Found ${totalData} total items`);
+                                showResults('data-results', `✅ Found ${totalData} items across ${stores.length} stores: ${storeInfo.join(', ')}`, 'success');
+                            }
+                        }
+                    };
+                    
+                    countRequest.onerror = () => {
+                        log(`❌ Failed to count ${storeName}: ${countRequest.error}`);
+                    };
+                    
+                } catch (error) {
+                    log(`❌ Error checking ${storeName}: ${error.message}`);
+                }
+            }
+        }
+        
+        function checkLocalStorage() {
+            log('Checking LocalStorage...');
+            try {
+                const keys = Object.keys(localStorage);
+                log(`LocalStorage has ${keys.length} items:`);
+                
+                if (keys.length === 0) {
+                    log('  (empty)');
+                } else {
+                    keys.forEach(key => {
+                        const value = localStorage.getItem(key);
+                        log(`  ${key}: ${value ? (value.length > 50 ? value.substring(0, 50) + '...' : value) : 'null'}`);
+                    });
+                }
+                
+                // Look for study-companion related items
+                const studyKeys = keys.filter(key => key.includes('study') || key.includes('companion'));
+                if (studyKeys.length > 0) {
+                    log(`Found ${studyKeys.length} study-companion related items in LocalStorage`);
+                }
+                
+            } catch (error) {
+                log(`❌ LocalStorage check failed: ${error.message}`);
+            }
+        }
+        
+        function checkSessionStorage() {
+            log('Checking SessionStorage...');
+            try {
+                const keys = Object.keys(sessionStorage);
+                log(`SessionStorage has ${keys.length} items:`);
+                
+                if (keys.length === 0) {
+                    log('  (empty)');
+                } else {
+                    keys.forEach(key => {
+                        const value = sessionStorage.getItem(key);
+                        log(`  ${key}: ${value ? (value.length > 50 ? value.substring(0, 50) + '...' : value) : 'null'}`);
+                    });
+                }
+                
+            } catch (error) {
+                log(`❌ SessionStorage check failed: ${error.message}`);
+            }
+        }
+        
+        function checkOtherStorage() {
+            log('Checking for other storage mechanisms...');
+            
+            // Check for WebSQL (deprecated)
+            if (window.openDatabase) {
+                log('WebSQL available (but likely not used)');
+            }
+            
+            // Check for File System Access API
+            if ('showDirectoryPicker' in window) {
+                log('File System Access API available');
+            }
+            
+            // Check for Cache API
+            if ('caches' in window) {
+                log('Cache API available');
+                caches.keys().then(keys => {
+                    log(`Found ${keys.length} cache entries`);
+                });
+            }
+        }
+        
+        async function exportAllFoundData() {
+            log('Attempting to export any found data...');
+            showResults('backup-results', '🔄 Checking for exportable data...', 'info');
+            
+            try {
+                // Try to get any data from IndexedDB
+                const request = indexedDB.open('StudyCompanionDB');
+                request.onsuccess = () => {
+                    const db = request.result;
+                    const stores = Array.from(db.objectStoreNames);
+                    
+                    if (stores.length === 0) {
+                        showResults('backup-results', '❌ No data to export - database is empty', 'error');
+                        return;
+                    }
+                    
+                    const allData = {};
+                    let completed = 0;
+                    
+                    stores.forEach(storeName => {
+                        const transaction = db.transaction(storeName, 'readonly');
+                        const store = transaction.objectStore(storeName);
+                        const getRequest = store.getAll();
+                        
+                        getRequest.onsuccess = () => {
+                            allData[storeName] = getRequest.result;
+                            completed++;
+                            
+                            if (completed === stores.length) {
+                                // Create download
+                                const dataStr = JSON.stringify({
+                                    timestamp: new Date().toISOString(),
+                                    database: 'StudyCompanionDB',
+                                    version: db.version,
+                                    stores: allData
+                                }, null, 2);
+                                
+                                const blob = new Blob([dataStr], { type: 'application/json' });
+                                const url = URL.createObjectURL(blob);
+                                const a = document.createElement('a');
+                                a.href = url;
+                                a.download = `study-companion-data-backup-${new Date().toISOString().split('T')[0]}.json`;
+                                a.click();
+                                URL.revokeObjectURL(url);
+                                
+                                const totalItems = Object.values(allData).reduce((sum, data) => sum + data.length, 0);
+                                showResults('backup-results', `✅ Exported ${totalItems} items from ${stores.length} stores`, 'success');
+                                log(`✅ Exported ${totalItems} items`);
+                            }
+                        };
+                    });
+                    
+                    db.close();
+                };
+                
+                request.onerror = () => {
+                    showResults('backup-results', `❌ Export failed: ${request.error}`, 'error');
+                };
+                
+            } catch (error) {
+                showResults('backup-results', `❌ Export error: ${error.message}`, 'error');
+            }
+        }
+        
+        function createDataReport() {
+            log('Creating data report...');
+            const report = {
+                timestamp: new Date().toISOString(),
+                userAgent: navigator.userAgent,
+                localStorage: Object.keys(localStorage).length,
+                sessionStorage: Object.keys(sessionStorage).length,
+                indexedDBDatabases: 'unknown'
+            };
+            
+            // Try to get IndexedDB info
+            if ('databases' in indexedDB) {
+                indexedDB.databases().then(databases => {
+                    report.indexedDBDatabases = databases.length;
+                    report.databaseNames = databases.map(db => ({ name: db.name, version: db.version }));
+                    
+                    const reportStr = JSON.stringify(report, null, 2);
+                    const blob = new Blob([reportStr], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `data-report-${new Date().toISOString().split('T')[0]}.json`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                    
+                    showResults('backup-results', '✅ Data report created and downloaded', 'success');
+                });
+            }
+        }
+        
+        // Auto-run on load
+        window.addEventListener('load', () => {
+            setTimeout(checkAllDataSources, 1000);
+        });
+    </script>
+</body>
+</html>

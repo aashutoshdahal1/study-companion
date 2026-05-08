@@ -5,7 +5,7 @@ import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
 import JSZip from "jszip";
 import { pdfjs } from "react-pdf";
-import { BookOpen, Download, FileDown, Layers, Loader2, PanelLeft, PanelRight, Sparkles } from "lucide-react";
+import { BookOpen, Brain, Download, FileDown, Layers, Loader2, Mic, PanelLeft, PanelRight, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -23,6 +23,8 @@ import { ChatAI } from "@/components/ChatAI";
 import { FlashcardViewer } from "@/components/FlashcardViewer";
 import { QuizViewer } from "@/components/QuizViewer";
 import { SmartNotesGenerator } from "@/components/SmartNotesGenerator";
+import { PodcastPlayer } from "@/components/PodcastPlayer";
+import { ActiveRecall } from "@/components/ActiveRecall";
 import { storage, type DocMeta, type Workspace } from "@/lib/storage";
 import { markdownToHtml } from "@/lib/utils";
 
@@ -297,6 +299,9 @@ function StudyApp() {
   const [page, setPage] = useState(1);
   const [pptxSlideCount, setPptxSlideCount] = useState(0);
   const [notesHtml, setNotesHtml] = useState("");
+  const notesLoadedForId = useRef<string | null>(null);
+  const workspaceInitialized = useRef(false);
+  const preloadedDocs = useRef<DocMeta[] | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [extractingPageText, setExtractingPageText] = useState(false);
@@ -323,6 +328,8 @@ function StudyApp() {
   const [flashcardOpen, setFlashcardOpen] = useState(false);
   const [quizOpen, setQuizOpen] = useState(false);
   const [smartNotesOpen, setSmartNotesOpen] = useState(false);
+  const [podcastOpen, setPodcastOpen] = useState(false);
+  const [recallOpen, setRecallOpen] = useState(false);
   const [pdfPageCount, setPdfPageCount] = useState(0);
   const [lastPageText, setLastPageText] = useState("");
   const editorRef = useRef<{ insertPageTag: () => void } | null>(null);
@@ -343,19 +350,55 @@ function StudyApp() {
 
     const storedWorkspaceId =
       typeof window !== "undefined" ? window.localStorage.getItem(ACTIVE_WORKSPACE_STORAGE_KEY) : null;
-    const preferredWorkspaceId =
-      storedWorkspaceId && workspacesList.some((workspace) => workspace.id === storedWorkspaceId)
-        ? storedWorkspaceId
-        : null;
-    
-    // If no workspaces exist, create a default one
+
+    let activeWsId: string;
     if (workspacesList.length === 0) {
       const defaultWorkspace = await storage.createWorkspace("Default Workspace");
       setWorkspaces([defaultWorkspace]);
-      setActiveWorkspaceId(defaultWorkspace.id);
+      activeWsId = defaultWorkspace.id;
     } else {
-      // Restore the last selected workspace, or fall back to the first one.
-      setActiveWorkspaceId(preferredWorkspaceId || workspacesList[0].id);
+      activeWsId =
+        storedWorkspaceId && workspacesList.some((w) => w.id === storedWorkspaceId)
+          ? storedWorkspaceId
+          : workspacesList[0].id;
+    }
+    setActiveWorkspaceId(activeWsId);
+
+    const workspaceDocs = docsList.filter((d) => d.workspaceId === activeWsId);
+    if (workspaceDocs.length > 0) {
+      // Stash the already-fetched doc list so the activeId effect can use it
+      // directly instead of re-fetching from storage.
+      preloadedDocs.current = docsList;
+      // Don't auto-select first document - let user choose
+      setActiveId(null);
+    }
+  };
+
+  const loadDocAndNote = async (docId: string) => {
+    setLoading(true);
+    const cachedDocs = preloadedDocs.current;
+    preloadedDocs.current = null;
+    const [blob, note, fetchedDocs] = await Promise.all([
+      storage.getBlob(docId),
+      storage.getNote(docId),
+      cachedDocs ? Promise.resolve(cachedDocs) : storage.listDocs(),
+    ]);
+    const meta = fetchedDocs.find((m) => m.id === docId) || null;
+    setActiveBlob(blob || null);
+    setActiveMeta(meta);
+    notesLoadedForId.current = docId;
+    setNotesHtml(note?.html || "");
+    setPage(meta?.lastPage || 1);
+    setPptxSlideCount(0);
+    setLoading(false);
+
+    if (meta?.type === "pptx" && blob) {
+      extractPptxSlideCount(blob)
+        .then((count) => {
+          setPptxSlideCount(count);
+          setPage((current) => Math.min(Math.max(1, current), Math.max(1, count)));
+        })
+        .catch(() => setPptxSlideCount(0));
     }
   };
 
@@ -365,7 +408,7 @@ function StudyApp() {
     setPdfPageCount(0);
   }, [activeId]);
 
-  // Load active doc + notes
+  // Load active doc + notes whenever activeId changes
   useEffect(() => {
     if (!activeId) {
       setActiveBlob(null);
@@ -374,46 +417,30 @@ function StudyApp() {
       setPptxSlideCount(0);
       return;
     }
-    setLoading(true);
-    Promise.all([storage.getBlob(activeId), storage.getNote(activeId), storage.listDocs()]).then(
-      ([blob, note, all]) => {
-        const meta = all.find((m) => m.id === activeId) || null;
-        setActiveBlob(blob || null);
-        setActiveMeta(meta);
-        setNotesHtml(note?.html || "");
-        setPage(meta?.lastPage || 1);
-        setPptxSlideCount(0);
-
-        if (meta?.type === "pptx" && blob) {
-          extractPptxSlideCount(blob)
-            .then((count) => {
-              setPptxSlideCount(count);
-              setPage((current) => Math.min(Math.max(1, current), Math.max(1, count)));
-            })
-            .catch(() => setPptxSlideCount(0));
-        }
-
-        setLoading(false);
-      }
-    );
+    loadDocAndNote(activeId);
   }, [activeId]);
 
-  // Update docs when workspace changes
+  // When the user switches workspace, select the first doc in it.
+  // workspaceInitialized starts false; loadData sets it to true after the
+  // initial activeId is already set, so this effect is a no-op on first mount.
   useEffect(() => {
     if (!activeWorkspaceId) return;
-    
-    const workspaceDocs = docs.filter(doc => doc.workspaceId === activeWorkspaceId);
-    if (workspaceDocs.length > 0 && !activeId) {
-      setActiveId(workspaceDocs[0].id);
+    if (!workspaceInitialized.current) {
+      workspaceInitialized.current = true;
+      return;
     }
-  }, [activeWorkspaceId, docs, activeId]);
+    const workspaceDocs = docs.filter((d) => d.workspaceId === activeWorkspaceId);
+    setActiveId(workspaceDocs.length > 0 ? workspaceDocs[0].id : null);
+  }, [activeWorkspaceId]);
 
-  // Auto-save notes (debounced)
+  // Auto-save notes (debounced). notesLoadedForId guards against saving stale
+  // html from a previous doc before the new doc's note has finished loading.
   useEffect(() => {
     if (!activeId) return;
+    if (notesLoadedForId.current !== activeId) return;
     const t = setTimeout(() => {
       storage
-        .saveNote({ docId: activeId, html: notesHtml, perPage: {}, updatedAt: Date.now() })
+        .saveNote({ docId: activeId, html: notesHtml, updatedAt: Date.now() })
         .then(() => setSavedAt(Date.now()));
     }, 600);
     return () => clearTimeout(t);
@@ -458,23 +485,17 @@ function StudyApp() {
       size: file.size,
       type: isPdf ? 'pdf' : isPptx ? 'pptx' : 'html',
       workspaceId: activeWorkspaceId,
-      addedAt: Date.now(),
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
       lastPage: 1,
     };
 
     if (isHtml) {
-      // For HTML files, read content and set it as notes
       try {
         const htmlContent = await file.text();
-        setNotesHtml(htmlContent);
-        setPptxSlideCount(0);
-        setPage(1);
-        
-        // Create a blob for storage
         const htmlBlob = new Blob([htmlContent], { type: 'text/html' });
-        await storage.addDoc(meta, htmlBlob);
-        const all = await storage.listDocs();
-        setDocs(all);
+        await storage.createDoc(meta, htmlBlob);
+        setDocs((prev) => [meta, ...prev]);
         setActiveId(meta.id);
         toast.success(`Loaded ${file.name}`);
       } catch (error) {
@@ -482,10 +503,8 @@ function StudyApp() {
         toast.error(`Failed to load ${file.name}`);
       }
     } else {
-      // For PDF and PPTX files, use existing logic
-      await storage.addDoc(meta, file);
-      const all = await storage.listDocs();
-      setDocs(all);
+      await storage.createDoc(meta, file);
+      setDocs((prev) => [meta, ...prev]);
       setActiveId(meta.id);
       toast.success(`Loaded ${file.name}`);
     }
@@ -911,9 +930,24 @@ function StudyApp() {
             variant="ghost"
             size="sm"
             disabled={!activeMeta}
+            onClick={() => setRecallOpen(true)}
+          >
+            <Brain className="h-4 w-4 mr-1.5" /> Recall
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={!activeMeta}
             onClick={() => setSmartNotesOpen(true)}
           >
             <BookOpen className="h-4 w-4 mr-1.5" /> Smart Notes
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setPodcastOpen(true)}
+          >
+            <Mic className="h-4 w-4 mr-1.5" /> Podcast
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -982,9 +1016,58 @@ function StudyApp() {
                     extractingPageText={extractingPageText}
                     onNumPages={(count) => setPptxSlideCount(count)}
                   />
+                ) : activeMeta ? (
+                  activeMeta?.type === "pdf" ? (
+                    <PdfViewer
+                      file={activeBlob}
+                      page={page}
+                      onPageChange={setPage}
+                      onNumPages={setPdfPageCount}
+                      onExtractPageText={handleExtractCurrentPageText}
+                      extractingPageText={extractingPageText}
+                    />
+                  ) : activeMeta?.type === "pptx" ? (
+                    <PptxViewer
+                      ref={pptxViewerRef}
+                      file={activeBlob}
+                      fileName={activeMeta?.name}
+                      page={page}
+                      onPageChange={setPage}
+                      onExtractPageText={handleExtractCurrentPageText}
+                      extractingPageText={extractingPageText}
+                      onNumPages={(count) => setPptxSlideCount(count)}
+                    />
+                  ) : (
+                    <div className="flex h-full items-center justify-center text-muted-foreground">
+                      Unsupported document type.
+                    </div>
+                  )
                 ) : (
                   <div className="flex h-full items-center justify-center text-muted-foreground">
-                    Unsupported document type.
+                    <div className="text-center">
+                      <BookOpen className="h-12 w-12 mb-4 text-muted-foreground/50" />
+                      <h2 className="text-xl font-semibold mb-2">Welcome to StudySync</h2>
+                      <p className="text-muted-foreground mb-4">Select a workspace and upload your first document to get started</p>
+                      <div className="space-y-2">
+                        <div className="bg-card p-4 rounded-lg">
+                          <h3 className="font-medium mb-2">Getting Started</h3>
+                          <ul className="space-y-2 text-sm">
+                            <li className="flex items-center">
+                              <BookOpen className="h-4 w-4 mr-2" />
+                              <span>Upload PDF, PPTX, or HTML files to your workspace</span>
+                            </li>
+                            <li className="flex items-center">
+                              <Layers className="h-4 w-4 mr-2" />
+                              <span>Organize documents into workspaces</span>
+                            </li>
+                            <li className="flex items-center">
+                              <Sparkles className="h-4 w-4 mr-2" />
+                              <span>Take notes with our AI-powered editor</span>
+                            </li>
+                          </ul>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 )}
               </Panel>
@@ -1018,6 +1101,23 @@ function StudyApp() {
       <QuizViewer
         isOpen={quizOpen}
         onClose={() => setQuizOpen(false)}
+        notesHtml={notesHtml}
+        pageText={lastPageText}
+        currentPage={page}
+      />
+
+      {/* Podcast Player */}
+      <PodcastPlayer
+        isOpen={podcastOpen}
+        onClose={() => setPodcastOpen(false)}
+        activeMeta={activeMeta}
+        notesHtml={notesHtml}
+      />
+
+      {/* Active Recall */}
+      <ActiveRecall
+        isOpen={recallOpen}
+        onClose={() => setRecallOpen(false)}
         notesHtml={notesHtml}
         pageText={lastPageText}
         currentPage={page}

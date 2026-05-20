@@ -2,6 +2,7 @@ import express from 'express';
 import https from 'https';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { spawn } from 'child_process';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -13,7 +14,7 @@ const htmlPath = path.join(__dirname, 'index.html');
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
 };
 
 function setCors(res, contentType = 'text/plain') {
@@ -24,13 +25,17 @@ function setCors(res, contentType = 'text/plain') {
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Headers', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
   if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
 });
 
-// Only parse JSON for /api/* routes — the root POST proxy needs raw body
-app.use('/api', express.json());
+// Only parse JSON for /api/* routes — the root POST proxy needs raw body.
+// Exclude /api/audioconvert/* so express.raw() on that route gets the body first.
+app.use('/api', (req, res, next) => {
+  if (req.path.startsWith('/audioconvert')) return next();
+  express.json()(req, res, next);
+});
 
 // ── TTS voices ───────────────────────────────────────────────────────────────
 const VOICES = [
@@ -181,8 +186,98 @@ app.post('/', express.raw({ type: 'application/json', limit: '10mb' }), async (r
   }
 });
 
+// ── Aliyun OSS upload proxy ──────────────────────────────────────────────────
+app.put('/api/oss-upload', express.raw({ type: '*/*', limit: '500mb' }), async (req, res) => {
+  setCors(res, 'application/json');
+  const ossUrl = req.get('X-OSS-URL');
+  if (!ossUrl) return res.status(400).json({ error: 'Missing X-OSS-URL header' });
+  try {
+    const upstream = await fetch(ossUrl, { method: 'PUT', body: req.body });
+    if (!upstream.ok) {
+      const text = await upstream.text().catch(() => '');
+      return res.status(upstream.status).json({ error: `OSS ${upstream.status}`, detail: text.slice(0, 500) });
+    }
+    res.status(200).json({ ok: true });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+// ── audioconvert.ai API proxy ─────────────────────────────────────────────────
+// All audioconvert.ai calls are blocked by CORS when made from localhost.
+// This proxy forwards them from Node (no browser CORS restrictions).
+app.all('/api/audioconvert/*', express.raw({ type: '*/*', limit: '10mb' }), async (req, res) => {
+  setCors(res, 'application/json');
+  const acPath = req.path.replace('/api/audioconvert', '');
+  const query = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+  const target = `https://audioconvert.ai/api${acPath}${query}`;
+  const token = req.get('X-AC-Token') || '';
+
+  const headers = {
+    'authorization': `Bearer ${token}`,
+    'accept': req.get('accept') || '*/*',
+    'origin': 'https://audioconvert.ai',
+    'referer': 'https://audioconvert.ai/',
+    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36',
+  };
+  if (req.get('content-type')) headers['content-type'] = req.get('content-type');
+
+  console.log(`[audioconvert proxy] ${req.method} ${target} body-len=${req.body?.length ?? 0}`);
+  try {
+    // Use redirect:'manual' to detect redirects and reissue with body preserved.
+    let upstream = await fetch(target, {
+      method: req.method,
+      headers,
+      body: ['GET', 'HEAD'].includes(req.method) ? undefined : req.body,
+      redirect: 'manual',
+    });
+    // Follow redirects manually so POST body is not dropped
+    if (upstream.status >= 300 && upstream.status < 400) {
+      const location = upstream.headers.get('location');
+      console.log(`[audioconvert proxy] redirect ${upstream.status} → ${location}`);
+      if (location) {
+        upstream = await fetch(location, {
+          method: req.method,
+          headers,
+          body: ['GET', 'HEAD'].includes(req.method) ? undefined : req.body,
+        });
+      }
+    }
+
+    // For SSE streaming responses, pipe directly
+    const ct = upstream.headers.get('content-type') || '';
+    if (ct.includes('text/event-stream')) {
+      setCors(res, 'text/event-stream; charset=utf-8');
+      res.setHeader('cache-control', 'no-cache');
+      res.status(upstream.status);
+      res.flushHeaders();
+      const reader = upstream.body.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        res.write(Buffer.from(value));
+      }
+      res.end();
+      return;
+    }
+
+    // Regular JSON response
+    const body = await upstream.text();
+    setCors(res, ct || 'application/json');
+    res.status(upstream.status).send(body);
+  } catch (err) {
+    console.error('[audioconvert proxy] error:', err.message, '| target:', target);
+    res.status(502).json({ error: err.message });
+  }
+});
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`✓ Server running at http://localhost:${PORT}/`);
   console.log(`  TTS: http://localhost:${PORT}/api/voices`);
   console.log('  Press Ctrl+C to stop\n');
 });
+
+// Start MongoDB API server as a child process
+const mongo = spawn('node', ['mongodb-setup.js'], { stdio: 'inherit' });
+mongo.on('error', (err) => console.error('Failed to start MongoDB server:', err));
+mongo.on('exit', (code) => { if (code !== 0) console.error(`MongoDB server exited with code ${code}`); });

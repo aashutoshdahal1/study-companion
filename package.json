@@ -13,6 +13,7 @@
     "test:watch": "vitest",
     "server": "node server.js",
     "tts-server": "node server.js",
+    "mongo-server": "node mongodb-setup.js",
     "deepai-server": "node deepai-server.js"
   },
   "dependencies": {
@@ -62,7 +63,7 @@
     "date-fns": "^3.6.0",
     "dompurify": "^3.4.2",
     "embla-carousel-react": "^8.6.0",
-    "express": "^4.21.2",
+    "express": "^4.22.1",
     "input-otp": "^1.4.2",
     "jspdf": "^4.2.1",
     "jszip": "^3.10.1",

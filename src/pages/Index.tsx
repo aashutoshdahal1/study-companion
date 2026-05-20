@@ -5,7 +5,7 @@ import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
 import JSZip from "jszip";
 import { pdfjs } from "react-pdf";
-import { BookOpen, Brain, Download, FileDown, Layers, Loader2, Mic, PanelLeft, PanelRight, Sparkles } from "lucide-react";
+import { BookOpen, Brain, Download, FileDown, Layers, Loader2, Mic, NotebookPen, PanelLeft, PanelRight, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -25,7 +25,10 @@ import { QuizViewer } from "@/components/QuizViewer";
 import { SmartNotesGenerator } from "@/components/SmartNotesGenerator";
 import { PodcastPlayer } from "@/components/PodcastPlayer";
 import { ActiveRecall } from "@/components/ActiveRecall";
-import { storage, type DocMeta, type Workspace } from "@/lib/storage";
+import { storage, type DocMeta, type Workspace, type StandaloneNote } from "@/lib/storage";
+import { VoiceNotes } from "@/components/VoiceNotes";
+import { NewNoteDialog } from "@/components/NewNoteDialog";
+import { AudioTranscriber } from "@/components/AudioTranscriber";
 import { markdownToHtml } from "@/lib/utils";
 
 const ACTIVE_WORKSPACE_STORAGE_KEY = "study-companion.activeWorkspaceId";
@@ -332,6 +335,12 @@ function StudyApp() {
   const [recallOpen, setRecallOpen] = useState(false);
   const [pdfPageCount, setPdfPageCount] = useState(0);
   const [lastPageText, setLastPageText] = useState("");
+  const [voiceNotesOpen, setVoiceNotesOpen] = useState(false);
+  const [newNoteDialogOpen, setNewNoteDialogOpen] = useState(false);
+  const [audioTranscriberOpen, setAudioTranscriberOpen] = useState(false);
+  const [standaloneNotes, setStandaloneNotes] = useState<StandaloneNote[]>([]);
+  const [activeStandaloneNoteId, setActiveStandaloneNoteId] = useState<string | null>(null);
+  const [activeStandaloneNote, setActiveStandaloneNote] = useState<StandaloneNote | null>(null);
   const editorRef = useRef<{ insertPageTag: () => void } | null>(null);
   const pptxViewerRef = useRef<PptxViewerHandle | null>(null);
 
@@ -341,10 +350,12 @@ function StudyApp() {
   }, []);
 
   const loadData = async () => {
-    const [workspacesList, docsList] = await Promise.all([
+    const [workspacesList, docsList, snList] = await Promise.all([
       storage.listWorkspaces(),
-      storage.listDocs()
+      storage.listDocs(),
+      storage.listStandaloneNotes(),
     ]);
+    setStandaloneNotes(snList);
     setWorkspaces(workspacesList);
     setDocs(docsList);
 
@@ -445,6 +456,22 @@ function StudyApp() {
     }, 600);
     return () => clearTimeout(t);
   }, [notesHtml, activeId]);
+
+  // Auto-save standalone notes (debounced)
+  useEffect(() => {
+    if (!activeStandaloneNoteId || !activeStandaloneNote) return;
+    const t = setTimeout(() => {
+      const updated = { ...activeStandaloneNote, html: notesHtml };
+      storage.saveStandaloneNote(updated).then(() => {
+        setActiveStandaloneNote(updated);
+        setStandaloneNotes((prev) =>
+          prev.map((n) => (n.id === updated.id ? updated : n))
+        );
+        setSavedAt(Date.now());
+      });
+    }, 600);
+    return () => clearTimeout(t);
+  }, [notesHtml, activeStandaloneNoteId]);
 
   // Persist last page
   useEffect(() => {
@@ -570,6 +597,49 @@ function StudyApp() {
     setNotesHtml((h) => (h ? h + aiBlock : aiBlock));
     toast('AI response added to notes');
   }, []);
+
+  const handleNewNote = useCallback(() => {
+    setNewNoteDialogOpen(true);
+  }, []);
+
+  const handleNewNoteConfirm = useCallback(async (subject: string) => {
+    const now = Date.now();
+    const note: StandaloneNote = {
+      id: crypto.randomUUID(),
+      title: subject || "Class Notes",
+      subject,
+      html: "",
+      workspaceId: "",
+      createdAt: now,
+      updatedAt: now,
+    };
+    await storage.createStandaloneNote(note);
+    setStandaloneNotes((prev) => [note, ...prev]);
+    setActiveStandaloneNoteId(note.id);
+    setActiveStandaloneNote(note);
+    setActiveId(null);
+    setNotesHtml("");
+    toast.success("Note created!");
+  }, []);
+
+  const handleSelectStandaloneNote = useCallback(async (id: string) => {
+    const note = await storage.getStandaloneNote(id);
+    if (!note) return;
+    setActiveStandaloneNoteId(id);
+    setActiveStandaloneNote(note);
+    setActiveId(null);
+    setNotesHtml(note.html);
+  }, []);
+
+  const handleDeleteStandaloneNote = useCallback(async (id: string) => {
+    await storage.deleteStandaloneNote(id);
+    setStandaloneNotes((prev) => prev.filter((n) => n.id !== id));
+    if (activeStandaloneNoteId === id) {
+      setActiveStandaloneNoteId(null);
+      setActiveStandaloneNote(null);
+      setNotesHtml("");
+    }
+  }, [activeStandaloneNoteId]);
 
   const handleExtractCurrentPageText = useCallback(async (pageNumber: number, visibleText?: string) => {
     if (!activeBlob || !activeMeta) return;
@@ -945,9 +1015,23 @@ function StudyApp() {
           <Button
             variant="ghost"
             size="sm"
+            onClick={() => setVoiceNotesOpen(true)}
+          >
+            <Mic className="h-4 w-4 mr-1.5" /> Voice
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setAudioTranscriberOpen(true)}
+          >
+            <FileDown className="h-4 w-4 mr-1.5" /> Transcribe
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => setPodcastOpen(true)}
           >
-            <Mic className="h-4 w-4 mr-1.5" /> Podcast
+            <NotebookPen className="h-4 w-4 mr-1.5" /> Podcast
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -973,12 +1057,21 @@ function StudyApp() {
           <DocSidebar
             workspaces={workspaces}
             docs={docs}
+            standaloneNotes={standaloneNotes}
             activeWorkspaceId={activeWorkspaceId}
             activeId={activeId}
-            onSelect={setActiveId}
+            activeStandaloneNoteId={activeStandaloneNoteId}
+            onSelect={(id) => {
+              setActiveId(id);
+              setActiveStandaloneNoteId(null);
+              setActiveStandaloneNote(null);
+            }}
+            onSelectStandaloneNote={handleSelectStandaloneNote}
             onSelectWorkspace={handleSelectWorkspace}
             onUpload={handleUpload}
             onDelete={handleDelete}
+            onDeleteStandaloneNote={handleDeleteStandaloneNote}
+            onNewNote={handleNewNote}
             onCreateWorkspace={handleCreateWorkspace}
             onUpdateWorkspace={handleUpdateWorkspace}
             onDeleteWorkspace={handleDeleteWorkspace}
@@ -1042,6 +1135,27 @@ function StudyApp() {
                       Unsupported document type.
                     </div>
                   )
+                ) : activeStandaloneNote ? (
+                  <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center text-muted-foreground">
+                    <NotebookPen className="h-12 w-12 text-muted-foreground/40" />
+                    <div>
+                      <h2 className="text-lg font-semibold text-foreground">
+                        {activeStandaloneNote.subject || activeStandaloneNote.title}
+                      </h2>
+                      <p className="text-xs mt-3 text-muted-foreground/70">
+                        Created {new Date(activeStandaloneNote.createdAt).toLocaleString()}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setVoiceNotesOpen(true)}
+                      className="mt-2 flex items-center gap-2 rounded-lg border border-border bg-card px-4 py-2 text-sm font-medium hover:bg-accent transition-colors"
+                    >
+                      <Mic className="h-4 w-4" /> Start Voice Notes
+                    </button>
+                    <p className="text-xs text-muted-foreground/60">
+                      Speak in Nepali, English, or both — your notes appear on the right
+                    </p>
+                  </div>
                 ) : (
                   <div className="flex h-full items-center justify-center text-muted-foreground">
                     <div className="text-center">
@@ -1121,6 +1235,27 @@ function StudyApp() {
         notesHtml={notesHtml}
         pageText={lastPageText}
         currentPage={page}
+      />
+
+      {/* Audio Transcriber */}
+      <AudioTranscriber
+        isOpen={audioTranscriberOpen}
+        onClose={() => setAudioTranscriberOpen(false)}
+        onInsertToNotes={(html) => setNotesHtml((h) => (h ? h + html : html))}
+      />
+
+      {/* New Note Dialog */}
+      <NewNoteDialog
+        open={newNoteDialogOpen}
+        onOpenChange={setNewNoteDialogOpen}
+        onConfirm={handleNewNoteConfirm}
+      />
+
+      {/* Voice Notes */}
+      <VoiceNotes
+        isOpen={voiceNotesOpen}
+        onClose={() => setVoiceNotesOpen(false)}
+        onInsertToNotes={(html) => setNotesHtml((h) => (h ? h + html : html))}
       />
 
       {/* Smart Notes Generator */}

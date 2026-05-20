@@ -1,4 +1,4 @@
-import { Extension } from '@tiptap/core';
+import { Extension, Node } from '@tiptap/core';
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
 import Highlight from '@tiptap/extension-highlight';
 import { Table } from '@tiptap/extension-table';
@@ -365,9 +365,56 @@ export const PasteMetadata = Extension.create({
 });
 
 /**
+ * Passthrough node for raw HTML blocks (e.g. styled <div> infographic cards).
+ * TipTap has no built-in div node, so unknown divs get stripped.
+ * This extension preserves them verbatim including inline styles.
+ */
+export const HtmlBlock = Node.create({
+  name: 'htmlBlock',
+  group: 'block',
+  atom: true,
+  draggable: true,
+
+  addAttributes() {
+    return {
+      html: { default: '' },
+    };
+  },
+
+  parseHTML() {
+    return [
+      {
+        tag: 'div[style]',
+        getAttrs: (el) => ({ html: (el as HTMLElement).outerHTML }),
+      },
+      {
+        tag: 'div.html-block',
+        getAttrs: (el) => ({ html: (el as HTMLElement).getAttribute('data-html') || (el as HTMLElement).innerHTML }),
+      },
+    ];
+  },
+
+  renderHTML({ node }) {
+    // Wrap in a sentinel div so TipTap can identify it on re-parse
+    return ['div', { class: 'html-block', 'data-html': node.attrs.html }, 0];
+  },
+
+  addNodeView() {
+    return ({ node }) => {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'html-block-wrapper';
+      wrapper.style.cssText = 'margin: 8px 0; pointer-events: none; user-select: none;';
+      wrapper.innerHTML = node.attrs.html;
+      return { dom: wrapper };
+    };
+  },
+});
+
+/**
  * Export enhanced extensions that don't conflict with StarterKit
  */
 export const enhancedExtensions = [
+  HtmlBlock,
   EnhancedTable,
   EnhancedHighlight,
   PasteMetadata,

@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Notes Debug Tool</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .card { background: white; margin: 20px 0; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .success { border-left: 4px solid #28a745; }
+        .error { border-left: 4px solid #dc3545; }
+        .warning { border-left: 4px solid #ffc107; }
+        .info { border-left: 4px solid #17a2b8; }
+        button { padding: 10px 20px; margin: 5px; border: none; border-radius: 4px; cursor: pointer; background: #007bff; color: white; }
+        button:hover { background: #0056b3; }
+        button:disabled { background: #6c757d; cursor: not-allowed; }
+        pre { background: #f8f9fa; padding: 15px; border-radius: 4px; overflow-x: auto; font-size: 12px; }
+        .note-preview { background: #f8f9fa; padding: 15px; margin: 10px 0; border-radius: 4px; border-left: 3px solid #007bff; }
+        .note-preview h4 { margin: 0 0 10px 0; color: #007bff; }
+        .note-preview .meta { font-size: 12px; color: #666; margin-bottom: 10px; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .status { padding: 10px; border-radius: 4px; margin: 10px 0; }
+        .status.online { background: #d4edda; color: #155724; }
+        .status.offline { background: #f8d7da; color: #721c24; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📝 Notes Debug Tool</h1>
+        <p>Debug your MongoDB notes and hybrid storage connection</p>
+
+        <div class="card info">
+            <h3>🔧 Connection Status</h3>
+            <div id="connection-status">Checking...</div>
+            <button onclick="checkConnection()">Refresh Connection</button>
+        </div>
+
+        <div class="card">
+            <h3>📊 MongoDB Data</h3>
+            <button onclick="loadMongoData()">Load MongoDB Data</button>
+            <div id="mongo-data"></div>
+        </div>
+
+        <div class="card">
+            <h3>💾 Local IndexedDB Data</h3>
+            <button onclick="loadLocalData()">Load Local Data</button>
+            <div id="local-data"></div>
+        </div>
+
+        <div class="card">
+            <h3>🔄 Sync Status</h3>
+            <button onclick="checkSyncStatus()">Check Sync Status</button>
+            <div id="sync-status"></div>
+        </div>
+
+        <div class="card">
+            <h3>🔍 Note Comparison</h3>
+            <button onclick="compareNotes()">Compare Notes</button>
+            <div id="note-comparison"></div>
+        </div>
+
+        <div class="card">
+            <h3>🛠️ Fix Issues</h3>
+            <button onclick="forceSyncMongoToLocal()">Force Sync MongoDB → Local</button>
+            <button onclick="forceSyncLocalToMongo()">Force Sync Local → MongoDB</button>
+            <button onclick="clearLocalCache()">Clear Local Cache</button>
+            <div id="fix-results"></div>
+        </div>
+    </div>
+
+    <script>
+        const MONGO_API_URL = 'http://localhost:3001/api';
+        let mongoData = {};
+        let localData = {};
+
+        function log(elementId, message, type = 'info') {
+            const div = document.getElementById(elementId);
+            const entry = document.createElement('div');
+            entry.className = `status ${type}`;
+            entry.innerHTML = `<strong>${new Date().toLocaleTimeString()}:</strong> ${message}`;
+            div.appendChild(entry);
+        }
+
+        function showError(elementId, error) {
+            log(elementId, `❌ Error: ${error.message || error}`, 'error');
+        }
+
+        function showSuccess(elementId, message) {
+            log(elementId, `✅ ${message}`, 'success');
+        }
+
+        async function checkConnection() {
+            const statusDiv = document.getElementById('connection-status');
+            statusDiv.innerHTML = '<div class="status">Checking connection...</div>';
+            
+            try {
+                const response = await fetch(`${MONGO_API_URL}/health`);
+                if (response.ok) {
+                    const data = await response.json();
+                    statusDiv.innerHTML = `
+                        <div class="status online">🟢 MongoDB API Online</div>
+                        <div><strong>Status:</strong> ${data.status}</div>
+                        <div><strong>Timestamp:</strong> ${new Date(data.timestamp).toLocaleString()}</div>
+                    `;
+                    showSuccess('connection-status', 'MongoDB API is accessible');
+                } else {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+            } catch (error) {
+                statusDiv.innerHTML = `
+                    <div class="status offline">🔴 MongoDB API Offline</div>
+                    <div><strong>Error:</strong> ${error.message}</div>
+                    <div><strong>Check:</strong> Is the MongoDB API server running on port 3001?</div>
+                `;
+                showError('connection-status', error);
+            }
+        }
+
+        async function loadMongoData() {
+            const dataDiv = document.getElementById('mongo-data');
+            dataDiv.innerHTML = '<div>Loading MongoDB data...</div>';
+            
+            try {
+                // Load documents
+                const docsResponse = await fetch(`${MONGO_API_URL}/documents`);
+                const documents = await docsResponse.json();
+                
+                // Load notes for each document
+                const notesData = {};
+                for (const doc of documents) {
+                    try {
+                        const notesResponse = await fetch(`${MONGO_API_URL}/notes/${doc.id}`);
+                        if (notesResponse.ok) {
+                            const note = await notesResponse.json();
+                            notesData[doc.id] = note;
+                        }
+                    } catch (error) {
+                        console.warn(`Failed to load notes for ${doc.id}:`, error);
+                    }
+                }
+                
+                mongoData = { documents, notes: notesData };
+                
+                // Display results
+                let html = `<h4>📄 Documents (${documents.length})</h4>`;
+                documents.forEach(doc => {
+                    const hasNote = notesData[doc.id];
+                    html += `
+                        <div class="note-preview">
+                            <h4>${doc.name}</h4>
+                            <div class="meta">
+                                ID: ${doc.id} | Type: ${doc.type} | Size: ${doc.size} bytes<br>
+                                Workspace: ${doc.workspaceId}<br>
+                                Notes: ${hasNote ? '✅ ' + (hasNote.html ? hasNote.html.length + ' chars' : 'Empty') : '❌ None'}
+                            </div>
+                            ${hasNote && hasNote.html ? `
+                                <div><strong>Note Preview:</strong></div>
+                                <div>${hasNote.html.substring(0, 200)}${hasNote.html.length > 200 ? '...' : ''}</div>
+                            ` : ''}
+                        </div>
+                    `;
+                });
+                
+                dataDiv.innerHTML = html;
+                showSuccess('mongo-data', `Loaded ${documents.length} documents and ${Object.keys(notesData).length} notes`);
+                
+            } catch (error) {
+                showError('mongo-data', error);
+            }
+        }
+
+        async function loadLocalData() {
+            const dataDiv = document.getElementById('local-data');
+            dataDiv.innerHTML = '<div>Loading local IndexedDB data...</div>';
+            
+            try {
+                const db = await openIndexedDB();
+                const notes = await getAllNotes(db);
+                const documents = await getAllDocuments(db);
+                
+                localData = { notes, documents };
+                
+                let html = `<h4>📄 Local Documents (${documents.length})</h4>`;
+                documents.forEach(doc => {
+                    html += `
+                        <div class="note-preview">
+                            <h4>${doc.name}</h4>
+                            <div class="meta">
+                                ID: ${doc.id} | Type: ${doc.type} | Size: ${doc.size} bytes<br>
+                                Workspace: ${doc.workspaceId}
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                html += `<h4>📝 Local Notes (${notes.length})</h4>`;
+                notes.forEach(note => {
+                    html += `
+                        <div class="note-preview">
+                            <h4>Note for ${note.docId}</h4>
+                            <div class="meta">
+                                Length: ${note.html ? note.html.length : 0} chars<br>
+                                Updated: ${new Date(note.updatedAt).toLocaleString()}
+                            </div>
+                            ${note.html ? `
+                                <div><strong>Preview:</strong></div>
+                                <div>${note.html.substring(0, 200)}${note.html.length > 200 ? '...' : ''}</div>
+                            ` : ''}
+                        </div>
+                    `;
+                });
+                
+                dataDiv.innerHTML = html;
+                showSuccess('local-data', `Loaded ${documents.length} documents and ${notes.length} notes from local storage`);
+                
+            } catch (error) {
+                showError('local-data', error);
+            }
+        }
+
+        async function checkSyncStatus() {
+            const statusDiv = document.getElementById('sync-status');
+            statusDiv.innerHTML = '<div>Checking sync status...</div>';
+            
+            if (!mongoData.documents || !localData.notes) {
+                log('sync-status', 'Please load both MongoDB and local data first', 'warning');
+                return;
+            }
+            
+            let html = '<h4>🔄 Sync Analysis</h4>';
+            
+            // Check for documents in MongoDB but not in local
+            const mongoOnly = mongoData.documents.filter(doc => 
+                !localData.documents.find(local => local.id === doc.id)
+            );
+            
+            // Check for notes in MongoDB but not in local
+            const mongoNotesOnly = Object.keys(mongoData.notes).filter(docId =>
+                !localData.notes.find(note => note.docId === docId)
+            );
+            
+            // Check for local notes not in MongoDB
+            const localNotesOnly = localData.notes.filter(note =>
+                !mongoData.notes[note.docId]
+            );
+            
+            html += `
+                <div class="note-preview">
+                    <h4>Documents Only in MongoDB</h4>
+                    <div>${mongoOnly.length} documents</div>
+                    ${mongoOnly.map(doc => `- ${doc.name}`).join('<br>')}
+                </div>
+                <div class="note-preview">
+                    <h4>Notes Only in MongoDB</h4>
+                    <div>${mongoNotesOnly.length} notes</div>
+                    ${mongoNotesOnly.map(docId => `- ${docId}`).join('<br>')}
+                </div>
+                <div class="note-preview">
+                    <h4>Notes Only in Local</h4>
+                    <div>${localNotesOnly.length} notes</div>
+                    ${localNotesOnly.map(note => `- ${note.docId}`).join('<br>')}
+                </div>
+            `;
+            
+            statusDiv.innerHTML = html;
+            
+            if (mongoOnly.length === 0 && mongoNotesOnly.length === 0 && localNotesOnly.length === 0) {
+                showSuccess('sync-status', 'All data is synced between MongoDB and local storage');
+            } else {
+                log('sync-status', 'Sync issues detected. Use the fix tools below.', 'warning');
+            }
+        }
+
+        async function compareNotes() {
+            const compDiv = document.getElementById('note-comparison');
+            compDiv.innerHTML = '<div>Comparing notes...</div>';
+            
+            if (!mongoData.notes || !localData.notes) {
+                log('note-comparison', 'Please load both MongoDB and local data first', 'warning');
+                return;
+            }
+            
+            let html = '<h4>📊 Note Comparison</h4>';
+            
+            // Find common document IDs
+            const commonDocIds = Object.keys(mongoData.notes).filter(docId =>
+                localData.notes.find(note => note.docId === docId)
+            );
+            
+            commonDocIds.forEach(docId => {
+                const mongoNote = mongoData.notes[docId];
+                const localNote = localData.notes.find(note => note.docId === docId);
+                
+                const mongoLength = mongoNote.html ? mongoNote.html.length : 0;
+                const localLength = localNote.html ? localNote.html.length : 0;
+                const mongoUpdated = new Date(mongoNote.updatedAt);
+                const localUpdated = new Date(localNote.updatedAt);
+                
+                const isSame = mongoLength === localLength && mongoUpdated.getTime() === localUpdated.getTime();
+                
+                html += `
+                    <div class="note-preview ${isSame ? 'success' : 'warning'}">
+                        <h4>${docId}</h4>
+                        <div class="meta">
+                            MongoDB: ${mongoLength} chars, Updated: ${mongoUpdated.toLocaleString()}<br>
+                            Local: ${localLength} chars, Updated: ${localUpdated.toLocaleString()}<br>
+                            Status: ${isSame ? '✅ Synced' : '⚠️ Different'}
+                        </div>
+                    </div>
+                `;
+            });
+            
+            compDiv.innerHTML = html;
+        }
+
+        async function forceSyncMongoToLocal() {
+            const fixDiv = document.getElementById('fix-results');
+            fixDiv.innerHTML = '<div>Syncing MongoDB to local...</div>';
+            
+            try {
+                const db = await openIndexedDB();
+                const tx = db.transaction(['notes', 'documents'], 'readwrite');
+                
+                // Sync documents
+                for (const doc of mongoData.documents) {
+                    await tx.objectStore('documents').put(doc);
+                }
+                
+                // Sync notes
+                for (const [docId, note] of Object.entries(mongoData.notes)) {
+                    await tx.objectStore('notes').put(note);
+                }
+                
+                await tx.complete;
+                showSuccess('fix-results', 'MongoDB data synced to local storage');
+                setTimeout(() => loadLocalData(), 1000);
+                
+            } catch (error) {
+                showError('fix-results', error);
+            }
+        }
+
+        async function forceSyncLocalToMongo() {
+            const fixDiv = document.getElementById('fix-results');
+            fixDiv.innerHTML = '<div>Syncing local to MongoDB...</div>';
+            
+            try {
+                // Sync documents
+                for (const doc of localData.documents) {
+                    const response = await fetch(`${MONGO_API_URL}/documents`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(doc)
+                    });
+                    if (!response.ok) throw new Error(`Failed to sync document ${doc.id}`);
+                }
+                
+                // Sync notes
+                for (const note of localData.notes) {
+                    const response = await fetch(`${MONGO_API_URL}/notes`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(note)
+                    });
+                    if (!response.ok) throw new Error(`Failed to sync note ${note.docId}`);
+                }
+                
+                showSuccess('fix-results', 'Local data synced to MongoDB');
+                setTimeout(() => loadMongoData(), 1000);
+                
+            } catch (error) {
+                showError('fix-results', error);
+            }
+        }
+
+        async function clearLocalCache() {
+            if (!confirm('This will delete all local data. Are you sure?')) return;
+            
+            const fixDiv = document.getElementById('fix-results');
+            fixDiv.innerHTML = '<div>Clearing local cache...</div>';
+            
+            try {
+                const db = await openIndexedDB();
+                const tx = db.transaction(['notes', 'documents', 'workspaces', 'blobs'], 'readwrite');
+                
+                await tx.objectStore('notes').clear();
+                await tx.objectStore('documents').clear();
+                await tx.objectStore('workspaces').clear();
+                await tx.objectStore('blobs').clear();
+                
+                await tx.complete;
+                showSuccess('fix-results', 'Local cache cleared');
+                localData = { notes: [], documents: [] };
+                setTimeout(() => loadLocalData(), 1000);
+                
+            } catch (error) {
+                showError('fix-results', error);
+            }
+        }
+
+        // IndexedDB helpers
+        function openIndexedDB() {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open('StudyCompanionDB', 5);
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+            });
+        }
+
+        function getAllNotes(db) {
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction('notes', 'readonly');
+                const store = tx.objectStore('notes');
+                const request = store.getAll();
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+            });
+        }
+
+        function getAllDocuments(db) {
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction('documents', 'readonly');
+                const store = tx.objectStore('documents');
+                const request = store.getAll();
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+            });
+        }
+
+        // Initialize
+        window.addEventListener('load', () => {
+            checkConnection();
+        });
+    </script>
+</body>
+</html>

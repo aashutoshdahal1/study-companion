@@ -15,18 +15,30 @@ const app = express();
 const PORT = 3001;
 
 const MONGODB_URI = process.env.MONGODB_URI || process.env.VITE_MONGODB_URI || 'mongodb://localhost:27017/study-companion';
+const DEFAULT_FRONTEND_URLS = 'http://localhost:8081,http://127.0.0.1:8081,http://localhost:8080,http://localhost:8082,http://localhost:8083';
+const FRONTEND_URLS = (process.env.FRONTEND_URL || DEFAULT_FRONTEND_URLS)
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+const corsOptions = {
+  origin: FRONTEND_URLS,
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  optionsSuccessStatus: 204,
+};
 const client = new MongoClient(MONGODB_URI, {
   tls: true,
   tlsAllowInvalidCertificates: false,
-  serverSelectionTimeoutMS: 10000,
+  tlsAllowInvalidHostnames: false,
+  serverSelectionTimeoutMS: 15000,
+  connectTimeoutMS: 15000,
+  retryWrites: true,
+  w: 'majority'
 });
 
-app.use(cors({
-  origin: ['http://localhost:8081', 'http://localhost:8080', 'http://localhost:8082', 'http://localhost:8083'],
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 app.use(express.json({ limit: '50mb' }));
 
 const strip = ({ _id, ...rest }) => rest;
@@ -227,5 +239,6 @@ app.get('/api/health', (req, res) => {
 connectToMongoDB().then(() => {
   app.listen(PORT, () => {
     console.log(`MongoDB API server running on port ${PORT}`);
+    console.log(`Allowed frontend origins: ${FRONTEND_URLS.join(', ')}`);
   });
 }).catch(console.error);

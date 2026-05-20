@@ -33,7 +33,7 @@ export function ChatAI({ isVisible, onToggle, onInsertToNotes }: ChatAIProps) {
   const [selectedChatbot, setSelectedChatbot] = useState<'zai' | 'deepai'>('zai');
   const [deepaiModel, setDeepaiModel] = useState('standard');
   const [deepaiTools, setDeepaiTools] = useState(['image_generator', 'image_editor']);
-  const [deepaiProxyPort, setDeepaiProxyPort] = useState("8788");
+  const [deepaiProxyPort, setDeepaiProxyPort] = useState("8789");
   const [deepaiProxyStatus, setDeepaiProxyStatus] = useState<'online' | 'offline' | 'checking'>('checking');
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -114,6 +114,32 @@ export function ChatAI({ isVisible, onToggle, onInsertToNotes }: ChatAIProps) {
   const handleSendMessage = async () => {
     if (!input.trim() || isLoading) return;
 
+    // Guard: require token before sending
+    if (selectedChatbot === 'zai' && !token) {
+      setShowSettings(true);
+      const hint: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: '⚙️ Please add your **Z.ai Bearer token** in Settings (gear icon) to start chatting.',
+        timestamp: Date.now(),
+        chatbotType: 'zai',
+      };
+      setMessages(prev => [...prev, hint]);
+      return;
+    }
+
+    if (selectedChatbot === 'zai' && proxyStatus === 'offline') {
+      const hint: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: `⚠️ Proxy server is offline. Start it with:\n\`\`\`\nnode server.js\n\`\`\`\nThen try again.`,
+        timestamp: Date.now(),
+        chatbotType: 'zai',
+      };
+      setMessages(prev => [...prev, hint]);
+      return;
+    }
+
     const userMessage: ChatMessage = {
       id: crypto.randomUUID(),
       role: 'user',
@@ -126,7 +152,6 @@ export function ChatAI({ isVisible, onToggle, onInsertToNotes }: ChatAIProps) {
     setInput("");
     setIsLoading(true);
 
-    // Create abort controller for this request
     abortControllerRef.current = new AbortController();
 
     try {
@@ -137,17 +162,22 @@ export function ChatAI({ isVisible, onToggle, onInsertToNotes }: ChatAIProps) {
       }
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
-        console.log('Request was aborted');
+        // user cancelled — no message needed
       } else {
         console.error('Chat error:', error);
+        const msg = error instanceof Error ? error.message : 'Unknown error';
+        const isAuthError = msg.includes('401') || msg.includes('403') || msg.includes('Unauthorized');
         const errorMessage: ChatMessage = {
           id: crypto.randomUUID(),
           role: 'assistant',
-          content: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          content: isAuthError
+            ? '🔑 Authentication failed. Your Z.ai token may have expired — open Settings and paste a fresh token.'
+            : `Error: ${msg}`,
           timestamp: Date.now(),
           chatbotType: selectedChatbot
         };
         setMessages(prev => [...prev, errorMessage]);
+        if (isAuthError) setShowSettings(true);
       }
     } finally {
       setIsLoading(false);
@@ -200,7 +230,8 @@ export function ChatAI({ isVisible, onToggle, onInsertToNotes }: ChatAIProps) {
     });
 
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      const body = await response.text().catch(() => "");
+      throw new Error(`HTTP ${response.status}: ${body.slice(0, 200) || response.statusText}`);
     }
 
     const reader = response.body?.getReader();

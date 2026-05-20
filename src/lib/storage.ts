@@ -1,6 +1,7 @@
 // Hybrid Storage - MongoDB + IndexedDB wrapper for the Study Companion app
 
-import { hybridStorage } from './hybrid-storage';
+import { hybridStorage, type StandaloneNote } from './hybrid-storage';
+export type { StandaloneNote };
 
 export interface Workspace {
   id: string;
@@ -101,6 +102,27 @@ export const storage = {
   
   async deleteDeck(docId: string): Promise<void> {
     return hybridStorage.deleteDeck(docId);
+  },
+
+  // Standalone notes (class notes without a PDF)
+  async listStandaloneNotes(workspaceId?: string): Promise<StandaloneNote[]> {
+    return hybridStorage.listStandaloneNotes(workspaceId);
+  },
+
+  async getStandaloneNote(id: string): Promise<StandaloneNote | undefined> {
+    return hybridStorage.getStandaloneNote(id);
+  },
+
+  async createStandaloneNote(note: StandaloneNote): Promise<StandaloneNote> {
+    return hybridStorage.createStandaloneNote(note);
+  },
+
+  async saveStandaloneNote(note: StandaloneNote): Promise<void> {
+    return hybridStorage.saveStandaloneNote(note);
+  },
+
+  async deleteStandaloneNote(id: string): Promise<void> {
+    return hybridStorage.deleteStandaloneNote(id);
   },
 
   // Sync utilities

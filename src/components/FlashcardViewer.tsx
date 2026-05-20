@@ -35,16 +35,26 @@ function parseFlashcardsFromResponse(text: string): Flashcard[] {
   return [];
 }
 
+const CHUNK_SIZE = 3000;
+
+function splitIntoChunks(text: string): string[] {
+  const chunks: string[] = [];
+  for (let i = 0; i < text.length; i += CHUNK_SIZE) {
+    const chunk = text.slice(i, i + CHUNK_SIZE).trim();
+    if (chunk) chunks.push(chunk);
+  }
+  return chunks;
+}
+
 const FLASHCARD_PROMPT = (text: string) => {
-  const trimmed = text.slice(0, 3500);
-  const count = Math.min(15, Math.max(8, Math.floor(trimmed.length / 300)));
+  const count = Math.min(12, Math.max(5, Math.floor(text.length / 250)));
   return `Generate ${count} study flashcards from the following text. Return ONLY a valid JSON array — no markdown code fences, no explanation, nothing else. Each element must have exactly two string fields: "question" and "answer".
 
 Example of the exact format to return:
 [{"question":"What is X?","answer":"X is Y"},{"question":"Define Z","answer":"Z means W"}]
 
 Study material:
-${trimmed}`;
+${text}`;
 };
 
 async function callDeepAI(text: string, signal: AbortSignal): Promise<string> {
@@ -185,48 +195,55 @@ export function FlashcardViewer({ isOpen, onClose, docId, notesHtml, pageText, c
 
     try {
       const token = localStorage.getItem("zai-glm-bearer-token") || "";
-      let responseText = "";
-      let zaiError: string | null = null;
+      const chunks = splitIntoChunks(rawText);
 
-      if (token) {
-        try {
-          responseText = await callZaiProxy(rawText, token, abort.signal);
-          console.log("Flashcard - Z.ai response length:", responseText.length);
-        } catch (error) {
-          zaiError = error instanceof Error ? error.message : String(error);
-          console.error("Flashcard - Z.ai proxy error:", zaiError);
-        }
-      } else {
-        zaiError = "No Z.ai token found in localStorage";
-        console.warn("Flashcard -", zaiError);
-      }
+      toast.info(`Processing ${chunks.length} section${chunks.length > 1 ? "s" : ""}…`);
 
-      if (!responseText) {
-        try {
-          responseText = await callDeepAI(rawText, abort.signal);
-        } catch (error) {
-          console.error("Flashcard - DeepAI error:", error);
-        }
-      }
+      const results = await Promise.all(
+        chunks.map(async (chunk) => {
+          let responseText = "";
 
-      if (!responseText) {
-        const hint = zaiError
-          ? `Z.ai error: ${zaiError}`
-          : "No Z.ai token configured — add it in chat settings.";
-        throw new Error(`Flashcard generation failed. ${hint}`);
-      }
+          if (token) {
+            try {
+              responseText = await callZaiProxy(chunk, token, abort.signal);
+            } catch (err) {
+              console.error("Flashcard - Z.ai error for chunk:", err);
+            }
+          }
 
-      const parsed = parseFlashcardsFromResponse(responseText);
-      if (parsed.length === 0) {
-        toast.error("Couldn't parse flashcards from the AI response. Try again.");
+          if (!responseText) {
+            try {
+              responseText = await callDeepAI(chunk, abort.signal);
+            } catch (err) {
+              console.error("Flashcard - DeepAI error for chunk:", err);
+            }
+          }
+
+          return parseFlashcardsFromResponse(responseText);
+        })
+      );
+
+      const allCards = results.flat();
+
+      if (allCards.length === 0) {
+        toast.error("Couldn't generate flashcards. Check your AI token in chat settings.");
         return;
       }
 
-      setCards(parsed);
+      // Deduplicate by question text
+      const seen = new Set<string>();
+      const unique = allCards.filter((c) => {
+        const key = c.question.trim().toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+
+      setCards(unique);
       setCurrentIndex(0);
       setIsFlipped(false);
-      await storage.saveDeck({ docId, cards: parsed, updatedAt: Date.now() });
-      toast.success(`Generated ${parsed.length} flashcards!`);
+      await storage.saveDeck({ docId, cards: unique, updatedAt: Date.now() });
+      toast.success(`Generated ${unique.length} flashcards covering all topics!`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to generate flashcards.");
     } finally {

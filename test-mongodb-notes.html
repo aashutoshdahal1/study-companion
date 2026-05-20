@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MongoDB Notes Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test-section { margin: 20px 0; padding: 15px; border: 1px solid #ccc; border-radius: 5px; }
+        .success { background-color: #d4edda; border-color: #c3e6cb; }
+        .error { background-color: #f8d7da; border-color: #f5c6cb; }
+        .info { background-color: #d1ecf1; border-color: #bee5eb; }
+        pre { background: #f8f9fa; padding: 10px; border-radius: 3px; overflow-x: auto; }
+        button { padding: 8px 16px; margin: 5px; cursor: pointer; }
+        .note-item { margin: 10px 0; padding: 10px; background: #f9f9f9; border-radius: 3px; }
+    </style>
+</head>
+<body>
+    <h1>MongoDB Notes Test</h1>
+    
+    <div class="test-section info">
+        <h3>Environment Check</h3>
+        <div id="env-check"></div>
+    </div>
+
+    <div class="test-section">
+        <h3>Connectivity Tests</h3>
+        <button onclick="testHealth()">Test Health Endpoint</button>
+        <button onclick="testDocuments()">Test Documents</button>
+        <button onclick="testNotes()">Test Notes</button>
+        <div id="connectivity-results"></div>
+    </div>
+
+    <div class="test-section">
+        <h3>Notes Retrieval</h3>
+        <button onclick="loadAllNotes()">Load All Notes</button>
+        <button onclick="testSpecificNote()">Test Specific Note</button>
+        <div id="notes-results"></div>
+    </div>
+
+    <div class="test-section">
+        <h3>Hybrid Storage Test</h3>
+        <button onclick="testHybridStorage()">Test Hybrid Storage</button>
+        <div id="hybrid-results"></div>
+    </div>
+
+    <script>
+        const MONGO_API_URL = 'http://localhost:3001/api';
+        
+        function log(elementId, message, type = 'info') {
+            const div = document.getElementById(elementId);
+            const entry = document.createElement('div');
+            entry.className = type;
+            entry.innerHTML = `<strong>${new Date().toLocaleTimeString()}:</strong> ${message}`;
+            div.appendChild(entry);
+        }
+
+        function logError(elementId, error) {
+            log(elementId, `Error: ${error.message || error}`, 'error');
+        }
+
+        async function testHealth() {
+            try {
+                const response = await fetch(`${MONGO_API_URL}/health`);
+                const data = await response.json();
+                log('connectivity-results', `Health check: ${JSON.stringify(data)}`, 'success');
+            } catch (error) {
+                logError('connectivity-results', error);
+            }
+        }
+
+        async function testDocuments() {
+            try {
+                const response = await fetch(`${MONGO_API_URL}/documents`);
+                const data = await response.json();
+                log('connectivity-results', `Documents found: ${data.length}`, 'success');
+                if (data.length > 0) {
+                    log('connectivity-results', `First document: ${data[0].name}`, 'success');
+                }
+            } catch (error) {
+                logError('connectivity-results', error);
+            }
+        }
+
+        async function testNotes() {
+            try {
+                // Get first document ID
+                const docsResponse = await fetch(`${MONGO_API_URL}/documents`);
+                const documents = await docsResponse.json();
+                if (documents.length === 0) {
+                    log('connectivity-results', 'No documents found to test notes', 'error');
+                    return;
+                }
+
+                const firstDocId = documents[0].id;
+                const notesResponse = await fetch(`${MONGO_API_URL}/notes/${firstDocId}`);
+                
+                if (notesResponse.ok) {
+                    const note = await notesResponse.json();
+                    log('connectivity-results', `Note found for ${firstDocId}: ${note.html ? note.html.length : 0} chars`, 'success');
+                } else {
+                    log('connectivity-results', `No note found for ${firstDocId}`, 'info');
+                }
+            } catch (error) {
+                logError('connectivity-results', error);
+            }
+        }
+
+        async function loadAllNotes() {
+            try {
+                const docsResponse = await fetch(`${MONGO_API_URL}/documents`);
+                const documents = await docsResponse.json();
+                
+                const resultsDiv = document.getElementById('notes-results');
+                resultsDiv.innerHTML = '';
+                
+                for (const doc of documents) {
+                    try {
+                        const notesResponse = await fetch(`${MONGO_API_URL}/notes/${doc.id}`);
+                        if (notesResponse.ok) {
+                            const note = await notesResponse.json();
+                            const noteDiv = document.createElement('div');
+                            noteDiv.className = 'note-item';
+                            noteDiv.innerHTML = `
+                                <strong>${doc.name}</strong> (${doc.id})<br>
+                                <small>${note.html ? note.html.length : 0} characters</small><br>
+                                <small>Last updated: ${new Date(note.updatedAt).toLocaleString()}</small>
+                            `;
+                            resultsDiv.appendChild(noteDiv);
+                        }
+                    } catch (error) {
+                        log('notes-results', `Failed to load notes for ${doc.name}`, 'error');
+                    }
+                }
+            } catch (error) {
+                logError('notes-results', error);
+            }
+        }
+
+        async function testSpecificNote() {
+            const docId = prompt('Enter document ID:');
+            if (!docId) return;
+
+            try {
+                const response = await fetch(`${MONGO_API_URL}/notes/${docId}`);
+                if (response.ok) {
+                    const note = await response.json();
+                    const resultsDiv = document.getElementById('notes-results');
+                    resultsDiv.innerHTML = `
+                        <div class="note-item">
+                            <strong>Note for ${docId}</strong><br>
+                            <small>${note.html.length} characters</small><br>
+                            <small>Last updated: ${new Date(note.updatedAt).toLocaleString()}</small><br>
+                            <pre>${note.html.substring(0, 500)}${note.html.length > 500 ? '...' : ''}</pre>
+                        </div>
+                    `;
+                } else {
+                    log('notes-results', `No note found for ${docId}`, 'info');
+                }
+            } catch (error) {
+                logError('notes-results', error);
+            }
+        }
+
+        async function testHybridStorage() {
+            // Simulate hybrid storage behavior
+            try {
+                // Test online status
+                const healthResponse = await fetch(`${MONGO_API_URL}/health`);
+                const isOnline = healthResponse.ok;
+                
+                log('hybrid-results', `MongoDB Online: ${isOnline}`, isOnline ? 'success' : 'error');
+                
+                if (isOnline) {
+                    // Test note retrieval like hybrid storage does
+                    const docsResponse = await fetch(`${MONGO_API_URL}/documents`);
+                    const documents = await docsResponse.json();
+                    
+                    if (documents.length > 0) {
+                        const testDocId = documents[0].id;
+                        const notesResponse = await fetch(`${MONGO_API_URL}/notes/${testDocId}`);
+                        
+                        if (notesResponse.ok) {
+                            const note = await notesResponse.json();
+                            log('hybrid-results', `Hybrid storage would find note: ${note.html.length} chars`, 'success');
+                        } else {
+                            log('hybrid-results', `Hybrid storage would fall back to local for ${testDocId}`, 'info');
+                        }
+                    }
+                }
+            } catch (error) {
+                logError('hybrid-results', error);
+            }
+        }
+
+        // Environment check
+        window.addEventListener('load', () => {
+            const envDiv = document.getElementById('env-check');
+            envDiv.innerHTML = `
+                <strong>MongoDB API URL:</strong> ${MONGO_API_URL}<br>
+                <strong>Browser:</strong> ${navigator.userAgent}<br>
+                <strong>Environment Variables:</strong> Checking...
+            `;
+            
+            // Check if Vite environment variables are available
+            if (typeof import.meta !== 'undefined' && import.meta.env) {
+                const mongoUrl = import.meta.env.VITE_REACT_APP_MONGO_API_URL || import.meta.env.VITE_MONGODB_URI;
+                envDiv.innerHTML += `<br><strong>Vite Mongo URL:</strong> ${mongoUrl || 'Not found'}`;
+            } else {
+                envDiv.innerHTML += `<br><strong>Vite env:</strong> Not available`;
+            }
+        });
+    </script>
+</body>
+</html>

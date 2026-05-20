@@ -34,11 +34,22 @@ interface FlashcardDeck {
   updatedAt: number;
 }
 
+export interface StandaloneNote {
+  id: string;
+  title: string;
+  subject: string;
+  html: string;
+  workspaceId: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 class HybridStorage {
   private mongoApiUrl: string;
   private isOnline: boolean = false;
   private syncInProgress: boolean = false;
   private lastSyncTime: number = 0;
+  private dbPromise: Promise<IDBDatabase> | null = null;
   
   constructor() {
     // Use browser-compatible way to get environment variables
@@ -61,10 +72,22 @@ class HybridStorage {
 
   private async checkOnlineStatus(): Promise<boolean> {
     try {
-      const response = await fetch(`${this.mongoApiUrl}/health`);
+      const response = await fetch(`${this.mongoApiUrl}/health`, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(5000) // 5 second timeout
+      });
+      const wasOnline = this.isOnline;
       this.isOnline = response.ok;
+      
+      // Log status changes
+      if (wasOnline !== this.isOnline) {
+        console.log(`MongoDB connection status changed: ${wasOnline} -> ${this.isOnline}`);
+      }
+      
       return this.isOnline;
-    } catch {
+    } catch (error) {
+      console.warn('MongoDB health check failed:', error);
       this.isOnline = false;
       return false;
     }
@@ -72,8 +95,9 @@ class HybridStorage {
 
   // Local IndexedDB operations (existing functionality)
   private async open(): Promise<IDBDatabase> {
-    return new Promise((resolve, reject) => {
-      const request = indexedDB.open('StudyCompanionDB', 5);
+    if (this.dbPromise) return this.dbPromise;
+    this.dbPromise = new Promise((resolve, reject) => {
+      const request = indexedDB.open('StudyCompanionDB', 6);
       
       request.onupgradeneeded = () => {
         const db = request.result;
@@ -94,18 +118,27 @@ class HybridStorage {
         if (!db.objectStoreNames.contains('flashcards')) {
           db.createObjectStore('flashcards', { keyPath: 'docId' });
         }
+        if (!db.objectStoreNames.contains('standaloneNotes')) {
+          db.createObjectStore('standaloneNotes', { keyPath: 'id' });
+        }
       };
       
       request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
+      request.onerror = () => {
+        this.dbPromise = null;
+        reject(request.error);
+      };
     });
+    return this.dbPromise;
   }
 
   private async tx<T>(store: string, mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBRequest<T>): Promise<T> {
     const db = await this.open();
     return new Promise((resolve, reject) => {
       if (!db.objectStoreNames.contains(store)) {
-        reject(new Error(`Store "${store}" not found`));
+        // Store missing means DB upgrade hasn't run yet in this session —
+        // return a safe empty value rather than crashing.
+        resolve((Array.isArray([] as unknown as T) ? [] : undefined) as T);
         return;
       }
       
@@ -300,25 +333,31 @@ class HybridStorage {
 
   // Notes management
   async getNote(docId: string): Promise<NotePayload | undefined> {
-    if (this.isOnline) {
-      try {
-        const response = await fetch(`${this.mongoApiUrl}/notes/${docId}`);
-        if (response.ok) {
-          const mongoNote = await response.json() as NotePayload;
-          if (mongoNote && mongoNote.docId) {
-            await this.tx('notes', 'readwrite', (s) => s.put(mongoNote));
-            return mongoNote;
-          }
+    // Always try MongoDB first if online
+    try {
+      const response = await fetch(`${this.mongoApiUrl}/notes/${docId}`);
+      if (response.ok) {
+        const mongoNote = await response.json() as NotePayload;
+        if (mongoNote && mongoNote.docId) {
+          // Update local cache with MongoDB data
+          await this.tx('notes', 'readwrite', (s) => s.put(mongoNote));
+          console.log('Retrieved note from MongoDB:', docId);
+          return mongoNote;
         }
-        // 404 or empty — fall through to local, then back-fill
-      } catch {
-        this.isOnline = false;
       }
+    } catch (error) {
+      console.warn('MongoDB note retrieval failed, using local:', error);
+      this.isOnline = false;
     }
 
+    // Fallback to local storage
     const local = await this.tx<NotePayload | undefined>('notes', 'readonly', (s) => s.get(docId) as IDBRequest<NotePayload | undefined>);
-    if (local && this.isOnline) {
-      this.syncToMongoDB(local, 'note').catch(() => {});
+    if (local) {
+      console.log('Retrieved note from local storage:', docId);
+      // Try to sync local note to MongoDB if we're back online
+      if (this.isOnline) {
+        this.syncToMongoDB(local, 'note').catch(() => {});
+      }
     }
     return local;
   }
@@ -475,6 +514,30 @@ class HybridStorage {
 
   private async getAllNotes(): Promise<NotePayload[]> {
     return this.tx<NotePayload[]>('notes', 'readonly', (s) => s.getAll() as IDBRequest<NotePayload[]>);
+  }
+
+  // Standalone notes (no PDF/doc attached)
+  async listStandaloneNotes(workspaceId?: string): Promise<StandaloneNote[]> {
+    const all = await this.tx<StandaloneNote[]>('standaloneNotes', 'readonly', (s) => s.getAll() as IDBRequest<StandaloneNote[]>);
+    return workspaceId ? all.filter((n) => n.workspaceId === workspaceId) : all;
+  }
+
+  async getStandaloneNote(id: string): Promise<StandaloneNote | undefined> {
+    return this.tx<StandaloneNote | undefined>('standaloneNotes', 'readonly', (s) => s.get(id) as IDBRequest<StandaloneNote | undefined>);
+  }
+
+  async createStandaloneNote(note: StandaloneNote): Promise<StandaloneNote> {
+    await this.tx('standaloneNotes', 'readwrite', (s) => s.add(note));
+    return note;
+  }
+
+  async saveStandaloneNote(note: StandaloneNote): Promise<void> {
+    note.updatedAt = Date.now();
+    await this.tx('standaloneNotes', 'readwrite', (s) => s.put(note));
+  }
+
+  async deleteStandaloneNote(id: string): Promise<void> {
+    await this.tx('standaloneNotes', 'readwrite', (s) => s.delete(id));
   }
 
   // Status methods

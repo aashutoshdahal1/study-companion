@@ -2,6 +2,7 @@
   "name": "study-companion-mongo-api",
   "version": "1.0.0",
   "description": "MongoDB API for Study Companion hybrid storage",
+  "type": "module",
   "main": "mongodb-setup.js",
   "scripts": {
     "start": "node mongodb-setup.js",

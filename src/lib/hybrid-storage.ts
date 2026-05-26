@@ -97,7 +97,7 @@ class HybridStorage {
   private async open(): Promise<IDBDatabase> {
     if (this.dbPromise) return this.dbPromise;
     this.dbPromise = new Promise((resolve, reject) => {
-      const request = indexedDB.open('StudyCompanionDB', 6);
+      const request = indexedDB.open('StudyCompanionDB', 7);
       
       request.onupgradeneeded = () => {
         const db = request.result;
@@ -136,13 +136,15 @@ class HybridStorage {
     const db = await this.open();
     return new Promise((resolve, reject) => {
       if (!db.objectStoreNames.contains(store)) {
-        // Store missing means DB upgrade hasn't run yet in this session —
-        // return a safe empty value rather than crashing.
+        console.warn(`[IDB] store "${store}" not found in DB — upgrade may not have run`);
         resolve((Array.isArray([] as unknown as T) ? [] : undefined) as T);
         return;
       }
-      
+
       const t = db.transaction(store, mode);
+      t.onerror = () => reject(t.error);
+      t.onabort = () => reject(new Error(`Transaction aborted on store "${store}"`));
+
       const req = fn(t.objectStore(store));
       req.onsuccess = () => resolve(req.result as T);
       req.onerror = () => reject(req.error);
@@ -437,31 +439,55 @@ class HybridStorage {
 
   // Flashcard management
   async getDeck(docId: string): Promise<FlashcardDeck | undefined> {
+    if (this.isOnline) {
+      try {
+        const response = await fetch(`${this.mongoApiUrl}/flashcards/${docId}`);
+        if (response.ok) {
+          const deck = await response.json() as FlashcardDeck;
+          if (deck && deck.docId) {
+            await this.tx('flashcards', 'readwrite', (s) => s.put(deck));
+            return deck;
+          }
+        }
+      } catch {
+        // fall through to local
+      }
+    }
     return this.tx<FlashcardDeck | undefined>('flashcards', 'readonly', (s) => s.get(docId) as IDBRequest<FlashcardDeck | undefined>);
   }
 
   async saveDeck(deck: FlashcardDeck): Promise<void> {
     deck.updatedAt = Date.now();
     await this.tx('flashcards', 'readwrite', (s) => s.put(deck));
+    if (this.isOnline) {
+      this.mongoRequest('/flashcards', {
+        method: 'POST',
+        body: JSON.stringify(deck),
+      }).catch(console.warn);
+    }
   }
 
   async deleteDeck(docId: string): Promise<void> {
     await this.tx('flashcards', 'readwrite', (s) => s.delete(docId));
+    if (this.isOnline) {
+      this.mongoRequest(`/flashcards/${docId}`, { method: 'DELETE' }).catch(console.warn);
+    }
   }
 
   // Sync utilities
   private async updateLocalCache(store: string, data: any[]): Promise<void> {
     const db = await this.open();
-    const transaction = db.transaction(store, 'readwrite');
-    const storeObj = transaction.objectStore(store);
-    
-    // Clear existing data
-    await storeObj.clear();
-    
-    // Add new data
-    for (const item of data) {
-      await storeObj.add(item);
-    }
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(store, 'readwrite');
+      const storeObj = transaction.objectStore(store);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(new Error(`updateLocalCache aborted on store "${store}"`));
+      storeObj.clear();
+      for (const item of data) {
+        storeObj.put(item);
+      }
+    });
   }
 
   async backupToMongoDB(): Promise<void> {
@@ -518,26 +544,99 @@ class HybridStorage {
 
   // Standalone notes (no PDF/doc attached)
   async listStandaloneNotes(workspaceId?: string): Promise<StandaloneNote[]> {
+    // Try MongoDB first — returns metadata only (no html) to keep payload small
+    if (this.isOnline) {
+      try {
+        const mongoNotes = await this.mongoRequest<StandaloneNote[]>('/standalone-notes');
+        return workspaceId ? mongoNotes.filter((n) => n.workspaceId === workspaceId) : mongoNotes;
+      } catch {
+        // fall through to local
+      }
+    }
     const all = await this.tx<StandaloneNote[]>('standaloneNotes', 'readonly', (s) => s.getAll() as IDBRequest<StandaloneNote[]>);
     return workspaceId ? all.filter((n) => n.workspaceId === workspaceId) : all;
   }
 
   async getStandaloneNote(id: string): Promise<StandaloneNote | undefined> {
-    return this.tx<StandaloneNote | undefined>('standaloneNotes', 'readonly', (s) => s.get(id) as IDBRequest<StandaloneNote | undefined>);
+    // Read local first — IndexedDB is source of truth for content
+    const local = await this.tx<StandaloneNote | undefined>('standaloneNotes', 'readonly', (s) => s.get(id) as IDBRequest<StandaloneNote | undefined>);
+
+    if (this.isOnline) {
+      try {
+        const remote = await this.mongoRequest<StandaloneNote>(`/standalone-notes/${id}`);
+        if (remote && remote.id) {
+          // Local has html and is newer (or equal) → trust local, push to MongoDB
+          if (local?.html && local.updatedAt >= remote.updatedAt) {
+            this.mongoRequest('/standalone-notes', { method: 'POST', body: JSON.stringify(local) }).catch(console.warn);
+            return local;
+          }
+          // Remote is newer and has html → use remote, cache locally
+          if (remote.html) {
+            await this.tx('standaloneNotes', 'readwrite', (s) => s.put(remote));
+            return remote;
+          }
+          // Remote has no html but local does → push local to MongoDB
+          if (local?.html) {
+            this.mongoRequest('/standalone-notes', { method: 'POST', body: JSON.stringify(local) }).catch(console.warn);
+            return local;
+          }
+          // Neither has html (new/empty note) — cache remote metadata locally so it opens
+          await this.tx('standaloneNotes', 'readwrite', (s) => s.put(remote));
+          return remote;
+        }
+      } catch {
+        // fall through to local
+      }
+    }
+
+    return local;
   }
 
   async createStandaloneNote(note: StandaloneNote): Promise<StandaloneNote> {
     await this.tx('standaloneNotes', 'readwrite', (s) => s.add(note));
+    // Sync to MongoDB
+    if (this.isOnline) {
+      this.mongoRequest('/standalone-notes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(note),
+      }).catch(console.warn);
+    }
     return note;
   }
 
   async saveStandaloneNote(note: StandaloneNote): Promise<void> {
     note.updatedAt = Date.now();
     await this.tx('standaloneNotes', 'readwrite', (s) => s.put(note));
+    if (this.isOnline) {
+      this.mongoRequest('/standalone-notes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(note),
+      }).catch(console.warn);
+    }
+  }
+
+  // Write only to IndexedDB — fast, synchronous source of truth
+  async saveToLocalOnly(note: StandaloneNote): Promise<void> {
+    await this.tx('standaloneNotes', 'readwrite', (s) => s.put(note));
+  }
+
+  // Push a note to MongoDB (called separately after local save)
+  async syncStandaloneNoteToMongo(note: StandaloneNote): Promise<void> {
+    if (!this.isOnline) return;
+    await this.mongoRequest('/standalone-notes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(note),
+    });
   }
 
   async deleteStandaloneNote(id: string): Promise<void> {
     await this.tx('standaloneNotes', 'readwrite', (s) => s.delete(id));
+    if (this.isOnline) {
+      this.mongoRequest(`/standalone-notes/${id}`, { method: 'DELETE' }).catch(console.warn);
+    }
   }
 
   // Status methods

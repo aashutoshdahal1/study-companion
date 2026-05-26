@@ -5,7 +5,7 @@ import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
 import JSZip from "jszip";
 import { pdfjs } from "react-pdf";
-import { BookOpen, Brain, Download, FileDown, Layers, Loader2, Mic, NotebookPen, PanelLeft, PanelRight, Sparkles } from "lucide-react";
+import { BookOpen, Brain, Cloud, CloudOff, Download, FileDown, Layers, Loader2, Mic, NotebookPen, PanelLeft, PanelRight, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -303,9 +303,19 @@ function StudyApp() {
   const [pptxSlideCount, setPptxSlideCount] = useState(0);
   const [notesHtml, setNotesHtml] = useState("");
   const notesLoadedForId = useRef<string | null>(null);
+  const activeStandaloneNoteRef = useRef<StandaloneNote | null>(null);
+  // Changes every time the active standalone note changes; in-flight saves from
+  // the previous note compare their captured token and self-abort if mismatched.
+  const standaloneNoteToken = useRef<string>("");
+  const standaloneLastSavedHtml = useRef<string>("");
+  const standaloneLoadedHtml = useRef<string>(""); // html at load time — skip saving this back
+  const standaloneNotesRef = useRef<StandaloneNote[]>([]); // always-current list for callbacks
   const workspaceInitialized = useRef(false);
   const preloadedDocs = useRef<DocMeta[] | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
+  const [mongoSyncing, setMongoSyncing] = useState(false);
+  const [mongoSyncedAt, setMongoSyncedAt] = useState<number | null>(null);
+  const [mongoOnline, setMongoOnline] = useState(false);
   const [loading, setLoading] = useState(false);
   const [extractingPageText, setExtractingPageText] = useState(false);
   const SIDEBAR_VISIBLE_KEY = "study-companion.sidebarVisible";
@@ -338,6 +348,7 @@ function StudyApp() {
   const [voiceNotesOpen, setVoiceNotesOpen] = useState(false);
   const [newNoteDialogOpen, setNewNoteDialogOpen] = useState(false);
   const [audioTranscriberOpen, setAudioTranscriberOpen] = useState(false);
+  const [transcriberPendingFile, setTranscriberPendingFile] = useState<File | null>(null);
   const [standaloneNotes, setStandaloneNotes] = useState<StandaloneNote[]>([]);
   const [activeStandaloneNoteId, setActiveStandaloneNoteId] = useState<string | null>(null);
   const [activeStandaloneNote, setActiveStandaloneNote] = useState<StandaloneNote | null>(null);
@@ -347,6 +358,9 @@ function StudyApp() {
   // Load workspaces and docs on mount
   useEffect(() => {
     loadData();
+    setMongoOnline(storage.isMongoOnline());
+    const interval = setInterval(() => setMongoOnline(storage.isMongoOnline()), 15000);
+    return () => clearInterval(interval);
   }, []);
 
   const loadData = async () => {
@@ -355,6 +369,7 @@ function StudyApp() {
       storage.listDocs(),
       storage.listStandaloneNotes(),
     ]);
+
     setStandaloneNotes(snList);
     setWorkspaces(workspacesList);
     setDocs(docsList);
@@ -449,29 +464,86 @@ function StudyApp() {
   useEffect(() => {
     if (!activeId) return;
     if (notesLoadedForId.current !== activeId) return;
-    const t = setTimeout(() => {
-      storage
-        .saveNote({ docId: activeId, html: notesHtml, updatedAt: Date.now() })
-        .then(() => setSavedAt(Date.now()));
+    const t = setTimeout(async () => {
+      setSavedAt(Date.now());
+      setMongoSyncing(true);
+      try {
+        await storage.saveNote({ docId: activeId, html: notesHtml, updatedAt: Date.now() });
+        setMongoSyncedAt(Date.now());
+        setMongoOnline(storage.isMongoOnline());
+      } catch {
+        // local save still worked; mongo may be offline
+      } finally {
+        setMongoSyncing(false);
+      }
     }, 600);
     return () => clearTimeout(t);
   }, [notesHtml, activeId]);
 
-  // Auto-save standalone notes (debounced)
+  // Keep refs in sync so callbacks always read the latest data without stale closures
+  useEffect(() => { activeStandaloneNoteRef.current = activeStandaloneNote; }, [activeStandaloneNote]);
+  useEffect(() => { standaloneNotesRef.current = standaloneNotes; }, [standaloneNotes]);
+
+  // Auto-save standalone notes.
+  // Strategy: write to IndexedDB immediately (fast, local), debounce MongoDB sync.
   useEffect(() => {
-    if (!activeStandaloneNoteId || !activeStandaloneNote) return;
-    const t = setTimeout(() => {
-      const updated = { ...activeStandaloneNote, html: notesHtml };
-      storage.saveStandaloneNote(updated).then(() => {
-        setActiveStandaloneNote(updated);
-        setStandaloneNotes((prev) =>
-          prev.map((n) => (n.id === updated.id ? updated : n))
-        );
+    if (!activeStandaloneNoteId) return;
+    const id = activeStandaloneNoteId;
+    const html = notesHtml;
+    const token = standaloneNoteToken.current;
+
+    // Don't save if nothing changed since last save
+    if (html === standaloneLastSavedHtml.current) return;
+    // Don't save back content that was just loaded — this prevents cross-note overwrites
+    // when activeStandaloneNoteId and notesHtml update in separate renders.
+    if (html === standaloneLoadedHtml.current) return;
+    // Don't wipe content: if html is empty but we previously saved content, skip
+    if (!html && standaloneLastSavedHtml.current) return;
+
+    // Build the note to save — use ref if it matches, otherwise reconstruct from
+    // standaloneNotes state via the id (handles the case where the ref hasn't synced yet)
+    const refNote = activeStandaloneNoteRef.current;
+    const noteBase = (refNote?.id === id ? refNote : standaloneNotes.find((n) => n.id === id));
+    if (!noteBase) return;
+
+    const updated = { ...noteBase, html, updatedAt: Date.now() };
+
+    // Debounce both local and remote saves so intermediate renders caused by
+    // note-switching (where id has updated but html hasn't yet) don't fire a save.
+    const t = setTimeout(async () => {
+      // Re-check token — if note switched again, abort entirely
+      if (standaloneNoteToken.current !== token) return;
+
+      // Local IndexedDB save
+      try {
+        await storage.saveToLocalOnly(updated);
+        if (standaloneNoteToken.current !== token) return;
+        standaloneLastSavedHtml.current = html;
+        standaloneLoadedHtml.current = "";
+        setActiveStandaloneNote((prev) => (prev?.id === id ? updated : prev));
+        setStandaloneNotes((prev) => prev.map((n) => (n.id === id ? updated : n)));
         setSavedAt(Date.now());
-      });
-    }, 600);
+      } catch (e) {
+        console.error("[StandaloneNote] local save failed:", e);
+        return;
+      }
+
+      // MongoDB sync
+      setMongoSyncing(true);
+      try {
+        await storage.syncStandaloneNoteToMongo(updated);
+        if (standaloneNoteToken.current !== token) return;
+        setMongoSyncedAt(Date.now());
+        setMongoOnline(true);
+      } catch (e) {
+        console.warn("[StandaloneNote] mongo sync failed:", e);
+        setMongoOnline(false);
+      } finally {
+        setMongoSyncing(false);
+      }
+    }, 800);
     return () => clearTimeout(t);
-  }, [notesHtml, activeStandaloneNoteId]);
+  }, [notesHtml, activeStandaloneNoteId, standaloneNotes]);
 
   // Persist last page
   useEffect(() => {
@@ -578,8 +650,10 @@ function StudyApp() {
   }, [activeWorkspaceId, workspaces]);
 
   const handleSelectWorkspace = useCallback((workspaceId: string | null) => {
-    setActiveWorkspaceId(workspaceId);
-    setActiveId(null);
+    setActiveWorkspaceId((prev) => {
+      if (prev !== workspaceId) setActiveId(null);
+      return workspaceId;
+    });
   }, []);
 
   const insertPageTag = useCallback(() => {
@@ -604,17 +678,21 @@ function StudyApp() {
 
   const handleNewNoteConfirm = useCallback(async (subject: string) => {
     const now = Date.now();
+    const dateTitle = new Date(now).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
     const note: StandaloneNote = {
       id: crypto.randomUUID(),
-      title: subject || "Class Notes",
-      subject,
+      title: dateTitle,
+      subject: subject || "Class Notes",
       html: "",
       workspaceId: "",
       createdAt: now,
       updatedAt: now,
     };
-    await storage.createStandaloneNote(note);
+    await storage.createStandaloneNote(note).catch((e) => console.error("[StandaloneNote] create failed:", e));
     setStandaloneNotes((prev) => [note, ...prev]);
+    standaloneNoteToken.current = note.id;
+    standaloneLastSavedHtml.current = "";
+    standaloneLoadedHtml.current = "";
     setActiveStandaloneNoteId(note.id);
     setActiveStandaloneNote(note);
     setActiveId(null);
@@ -622,14 +700,60 @@ function StudyApp() {
     toast.success("Note created!");
   }, []);
 
-  const handleSelectStandaloneNote = useCallback(async (id: string) => {
-    const note = await storage.getStandaloneNote(id);
-    if (!note) return;
-    setActiveStandaloneNoteId(id);
+  const handleNewPage = useCallback(async (subject: string) => {
+    const now = Date.now();
+    const dateTitle = new Date(now).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+    const note: StandaloneNote = {
+      id: crypto.randomUUID(),
+      title: dateTitle,
+      subject,
+      html: "",
+      workspaceId: "",
+      createdAt: now,
+      updatedAt: now,
+    };
+    await storage.createStandaloneNote(note).catch((e) => console.error("[StandaloneNote] create failed:", e));
+    setStandaloneNotes((prev) => [note, ...prev]);
+    standaloneNoteToken.current = note.id;
+    standaloneLastSavedHtml.current = "";
+    standaloneLoadedHtml.current = "";
+    setActiveStandaloneNoteId(note.id);
     setActiveStandaloneNote(note);
     setActiveId(null);
-    setNotesHtml(note.html);
+    setNotesHtml("");
+    toast.success(`New page added to "${subject}"`);
   }, []);
+
+  const handleSelectStandaloneNote = useCallback((id: string) => {
+    // Generate a new token immediately — this cancels any pending saves from the previous note
+    const newToken = crypto.randomUUID();
+    standaloneNoteToken.current = newToken;
+
+    // Step 1: show local data instantly (synchronous, no flicker)
+    const localNote = standaloneNotesRef.current.find((n) => n.id === id);
+    const localHtml = localNote?.html ?? "";
+    standaloneLastSavedHtml.current = localHtml;
+    standaloneLoadedHtml.current = localHtml;
+    setActiveStandaloneNoteId(id);
+    setActiveStandaloneNote(localNote ?? null);
+    setActiveId(null);
+    setNotesHtml(localHtml);
+
+    // Step 2: fetch from storage in the background and patch if we get newer content
+    storage.getStandaloneNote(id).then((remote) => {
+      // Abort if user switched notes again while we were fetching
+      if (standaloneNoteToken.current !== newToken) return;
+      if (!remote) return;
+      const remoteHtml = remote.html ?? "";
+      // Only update if remote has content and it differs from what we already showed
+      if (remoteHtml && remoteHtml !== localHtml) {
+        standaloneLastSavedHtml.current = remoteHtml;
+        standaloneLoadedHtml.current = remoteHtml;
+        setActiveStandaloneNote(remote);
+        setNotesHtml(remoteHtml);
+      }
+    }).catch(() => { /* remote fetch failed — local data already shown, no-op */ });
+  }, []); // no state deps — reads latest data via ref
 
   const handleDeleteStandaloneNote = useCallback(async (id: string) => {
     await storage.deleteStandaloneNote(id);
@@ -952,6 +1076,16 @@ function StudyApp() {
     return s < 5 ? "Saved" : `Saved ${s}s ago`;
   }, [savedAt, notesHtml]);
 
+  const mongoSyncLabel = useMemo(() => {
+    if (mongoSyncing) return "Syncing to DB…";
+    if (!mongoOnline) return "DB offline";
+    if (mongoSyncedAt) {
+      const s = Math.round((Date.now() - mongoSyncedAt) / 1000);
+      return s < 10 ? "Synced to DB" : null;
+    }
+    return null;
+  }, [mongoSyncing, mongoOnline, mongoSyncedAt, notesHtml]);
+
   const isPptx = activeMeta?.type === "pptx";
 
   return (
@@ -977,13 +1111,26 @@ function StudyApp() {
           )}
         </div>
         <div className="flex items-center gap-1">
-          {activeMeta && (
+          {(activeMeta || activeStandaloneNote) && (
             <span className="text-xs text-muted-foreground mr-1">{savedLabel}</span>
           )}
+          {mongoSyncing ? (
+            <span className="flex items-center gap-1 text-xs text-muted-foreground mr-1">
+              <Loader2 className="h-3 w-3 animate-spin" /> Syncing to DB…
+            </span>
+          ) : mongoSyncLabel === "DB offline" ? (
+            <span className="flex items-center gap-1 text-xs text-amber-500 mr-1" title="MongoDB is not reachable">
+              <CloudOff className="h-3 w-3" /> DB offline
+            </span>
+          ) : mongoSyncLabel === "Synced to DB" ? (
+            <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400 mr-1">
+              <Cloud className="h-3 w-3" /> Synced to DB
+            </span>
+          ) : null}
           <Button
             variant="ghost"
             size="sm"
-            disabled={!activeMeta}
+            disabled={!activeMeta && !activeStandaloneNote}
             onClick={() => setFlashcardOpen(true)}
           >
             <Layers className="h-4 w-4 mr-1.5" /> Flashcards
@@ -991,7 +1138,7 @@ function StudyApp() {
           <Button
             variant="ghost"
             size="sm"
-            disabled={!activeMeta}
+            disabled={!activeMeta && !activeStandaloneNote}
             onClick={() => setQuizOpen(true)}
           >
             <Sparkles className="h-4 w-4 mr-1.5" /> Quiz
@@ -999,7 +1146,7 @@ function StudyApp() {
           <Button
             variant="ghost"
             size="sm"
-            disabled={!activeMeta}
+            disabled={!activeMeta && !activeStandaloneNote}
             onClick={() => setRecallOpen(true)}
           >
             <Brain className="h-4 w-4 mr-1.5" /> Recall
@@ -1007,7 +1154,7 @@ function StudyApp() {
           <Button
             variant="ghost"
             size="sm"
-            disabled={!activeMeta}
+            disabled={!activeMeta && !activeStandaloneNote}
             onClick={() => setSmartNotesOpen(true)}
           >
             <BookOpen className="h-4 w-4 mr-1.5" /> Smart Notes
@@ -1017,7 +1164,7 @@ function StudyApp() {
             size="sm"
             onClick={() => setVoiceNotesOpen(true)}
           >
-            <Mic className="h-4 w-4 mr-1.5" /> Voice
+            <Mic className="h-4 w-4 mr-1.5" /> Record
           </Button>
           <Button
             variant="ghost"
@@ -1065,6 +1212,7 @@ function StudyApp() {
               setActiveId(id);
               setActiveStandaloneNoteId(null);
               setActiveStandaloneNote(null);
+              setNotesHtml("");
             }}
             onSelectStandaloneNote={handleSelectStandaloneNote}
             onSelectWorkspace={handleSelectWorkspace}
@@ -1072,6 +1220,7 @@ function StudyApp() {
             onDelete={handleDelete}
             onDeleteStandaloneNote={handleDeleteStandaloneNote}
             onNewNote={handleNewNote}
+            onNewPage={handleNewPage}
             onCreateWorkspace={handleCreateWorkspace}
             onUpdateWorkspace={handleUpdateWorkspace}
             onDeleteWorkspace={handleDeleteWorkspace}
@@ -1136,25 +1285,31 @@ function StudyApp() {
                     </div>
                   )
                 ) : activeStandaloneNote ? (
-                  <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center text-muted-foreground">
-                    <NotebookPen className="h-12 w-12 text-muted-foreground/40" />
-                    <div>
-                      <h2 className="text-lg font-semibold text-foreground">
+                  <div className="flex h-full flex-col items-center justify-center gap-6 p-10 text-center">
+                    <div className="flex flex-col items-center gap-2">
+                      <NotebookPen className="h-10 w-10 text-primary/40" />
+                      <h2 className="text-xl font-bold text-foreground">
                         {activeStandaloneNote.subject || activeStandaloneNote.title}
                       </h2>
-                      <p className="text-xs mt-3 text-muted-foreground/70">
+                      <p className="text-xs text-muted-foreground/60">
                         Created {new Date(activeStandaloneNote.createdAt).toLocaleString()}
                       </p>
                     </div>
+
+                    <div className="max-w-sm rounded-xl border border-border bg-card/60 px-8 py-6 shadow-sm">
+                      <p className="text-2xl text-muted-foreground/30 font-serif leading-none mb-3">"</p>
+                      <p className="text-sm font-medium text-foreground/80 leading-relaxed italic">
+                        The more you study, the more you find out how little you know — but every note you take brings you one step closer to mastery.
+                      </p>
+                      <p className="mt-4 text-xs text-muted-foreground/50">Start typing on the right, or record your voice below.</p>
+                    </div>
+
                     <button
                       onClick={() => setVoiceNotesOpen(true)}
-                      className="mt-2 flex items-center gap-2 rounded-lg border border-border bg-card px-4 py-2 text-sm font-medium hover:bg-accent transition-colors"
+                      className="flex items-center gap-2 rounded-lg border border-border bg-card px-5 py-2.5 text-sm font-medium hover:bg-accent transition-colors"
                     >
-                      <Mic className="h-4 w-4" /> Start Voice Notes
+                      <Mic className="h-4 w-4" /> Start Recording
                     </button>
-                    <p className="text-xs text-muted-foreground/60">
-                      Speak in Nepali, English, or both — your notes appear on the right
-                    </p>
                   </div>
                 ) : (
                   <div className="flex h-full items-center justify-center text-muted-foreground">
@@ -1187,7 +1342,7 @@ function StudyApp() {
               </Panel>
               <PanelResizeHandle className="w-1.5 bg-border hover:bg-primary/40 transition-colors" />
               <Panel defaultSize={45} minSize={25} className="bg-card">
-                <NotesEditor value={notesHtml} onChange={setNotesHtml} onInsertPageTag={activeMeta ? insertPageTag : undefined} />
+                <NotesEditor key={activeStandaloneNoteId ?? activeId ?? "default"} value={notesHtml} onChange={setNotesHtml} onInsertPageTag={activeMeta ? insertPageTag : undefined} />
               </Panel>
             </PanelGroup>
           )}
@@ -1242,6 +1397,8 @@ function StudyApp() {
         isOpen={audioTranscriberOpen}
         onClose={() => setAudioTranscriberOpen(false)}
         onInsertToNotes={(html) => setNotesHtml((h) => (h ? h + html : html))}
+        pendingFile={transcriberPendingFile}
+        onPendingFileConsumed={() => setTranscriberPendingFile(null)}
       />
 
       {/* New Note Dialog */}
@@ -1256,6 +1413,11 @@ function StudyApp() {
         isOpen={voiceNotesOpen}
         onClose={() => setVoiceNotesOpen(false)}
         onInsertToNotes={(html) => setNotesHtml((h) => (h ? h + html : html))}
+        onSendToTranscriber={(file) => {
+          setTranscriberPendingFile(file);
+          setVoiceNotesOpen(false);
+          setAudioTranscriberOpen(true);
+        }}
       />
 
       {/* Smart Notes Generator */}
@@ -1266,6 +1428,7 @@ function StudyApp() {
         activeMeta={activeMeta}
         totalPages={activeMeta?.type === "pdf" ? pdfPageCount : pptxSlideCount}
         currentPage={page}
+        notesHtml={notesHtml}
         onInsertToNotes={(html) => {
           setNotesHtml((h) => (h ? h + html : html));
           toast.success("Smart notes added to your notes!");

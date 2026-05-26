@@ -80,58 +80,20 @@ ${keyPoints.map((k, i) => `${i + 1}. ${k}`).join("\n")}
 Student's attempt:
 ${attempt}`;
 
-async function callZaiProxy(prompt: string, token: string, signal: AbortSignal): Promise<string> {
-  const payload = {
-    stream: true,
-    model: "GLM-5-Turbo",
-    messages: [{ role: "user", content: prompt }],
-    chat_id: crypto.randomUUID(),
-    current_user_message_id: crypto.randomUUID(),
-    current_user_message_parent_id: null,
-    extra: {},
-    params: {},
-    features: { image_generation: false, web_search: false, auto_web_search: false, preview_mode: true, flags: [] },
-    background_tasks: { title_generation: false, tags_generation: false },
-    variables: {},
-  };
+async function callGroq(prompt: string, signal: AbortSignal): Promise<string> {
+  const apiKey = localStorage.getItem("groq-api-key") || "";
+  const model = localStorage.getItem("groq-model") || "llama-3.3-70b-versatile";
+  if (!apiKey) throw new Error("Groq API key not configured. Add your key in Chat Settings.");
 
-  const response = await fetch(`http://localhost:8788?timestamp=${Date.now()}`, {
+  const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-Token": token },
-    body: JSON.stringify(payload),
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({ model, messages: [{ role: "user", content: prompt }], temperature: 0.4 }),
     signal,
   });
-  if (!response.ok) throw new Error(`Z.ai HTTP ${response.status}`);
-
-  const reader = response.body?.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let result = "";
-
-  const processLine = (line: string) => {
-    if (!line.startsWith("data: ")) return;
-    const raw = line.slice(6).trim();
-    if (!raw || raw === "[DONE]") return;
-    try {
-      const evt = JSON.parse(raw);
-      const d = evt.data;
-      if (!d) return;
-      const chunk = d.delta_content || d.edit_content;
-      if (chunk && (d.phase === "answer" || d.phase === "other")) result += chunk;
-    } catch {}
-  };
-
-  if (reader) {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) { if (buffer.trim()) processLine(buffer.trim()); break; }
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-      for (const line of lines) processLine(line);
-    }
-  }
-  return result;
+  if (!response.ok) throw new Error(`Groq HTTP ${response.status}`);
+  const json = await response.json();
+  return json.choices?.[0]?.message?.content ?? "";
 }
 
 export function ActiveRecall({ isOpen, onClose, notesHtml, pageText, currentPage }: ActiveRecallProps) {
@@ -171,10 +133,7 @@ export function ActiveRecall({ isOpen, onClose, notesHtml, pageText, currentPage
     const abort = new AbortController();
 
     try {
-      const token = localStorage.getItem("zai-glm-bearer-token") || "";
-      if (!token) throw new Error("Z.ai token not configured. Please add your Z.ai token in chat settings.");
-
-      const responseText = await callZaiProxy(CHUNK_PROMPT(rawText), token, abort.signal);
+      const responseText = await callGroq(CHUNK_PROMPT(rawText), abort.signal);
       const parsed = parseChunks(responseText);
       if (parsed.length === 0) {
         toast.error("Couldn't parse sections from AI response. Try again.");
@@ -207,14 +166,7 @@ export function ActiveRecall({ isOpen, onClose, notesHtml, pageText, currentPage
     const abort = new AbortController();
 
     try {
-      const token = localStorage.getItem("zai-glm-bearer-token") || "";
-      if (!token) throw new Error("Z.ai token not configured.");
-
-      const responseText = await callZaiProxy(
-        GRADE_PROMPT(chunk.passage, chunk.keyPoints, attempt),
-        token,
-        abort.signal
-      );
+      const responseText = await callGroq(GRADE_PROMPT(chunk.passage, chunk.keyPoints, attempt), abort.signal);
       const parsed = parseResult(responseText);
       if (!parsed) {
         toast.error("Couldn't parse grading response. Try again.");

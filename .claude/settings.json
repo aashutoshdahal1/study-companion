@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//private/etc/**)",
+      "Bash(python3 -c \"import socket; print\\(socket.getservbyname\\('sunproxyadmin'\\)\\)\")",
+      "Bash(curl -s \"https://chat.z.ai\")",
+      "Bash(grep -oE '\"model\"[^,]{0,50}')",
+      "Bash(curl -s http://localhost:3001/api/notes)",
+      "Bash(curl -s http://localhost:3001/api/)",
+      "Bash(curl -s -H \"Origin: http://localhost:8080\" http://localhost:3001/api/health -v)"
+    ]
+  }
+}

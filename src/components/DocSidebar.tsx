@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import {
   Upload, FileText, Trash2, Folder, FolderOpen,
   ChevronDown, ChevronRight, Edit2, Check, X,
-  FileDown, Loader2, NotebookPen, StickyNote,
+  FileDown, Loader2, NotebookPen, StickyNote, Plus,
 } from "lucide-react";
 import { toast } from "sonner";
 import type { Workspace, DocMeta, StandaloneNote } from "@/lib/storage";
@@ -24,6 +24,7 @@ interface DocSidebarProps {
   onDelete: (id: string) => void;
   onDeleteStandaloneNote: (id: string) => void;
   onNewNote: () => void;
+  onNewPage: (subject: string) => void;
   onCreateWorkspace: (name: string) => Promise<void>;
   onUpdateWorkspace: (workspace: Workspace) => Promise<void>;
   onDeleteWorkspace: (id: string) => Promise<void>;
@@ -45,6 +46,7 @@ export function DocSidebar({
   onDelete,
   onDeleteStandaloneNote,
   onNewNote,
+  onNewPage,
   onCreateWorkspace,
   onUpdateWorkspace,
   onDeleteWorkspace,
@@ -163,73 +165,112 @@ export function DocSidebar({
       </div>
 
       <div className="flex-1 overflow-y-auto p-2 space-y-1">
-        {/* ── Standalone notes (top-level, one entry per subject) ── */}
-        {standaloneNotes.map((note) => {
-          const isExpanded = expandedNotes.has(note.id);
-          const isActive = activeStandaloneNoteId === note.id;
+        {/* ── Standalone notes grouped by subject ── */}
+        {(() => {
+          // Group notes by subject, preserve insertion order of first note per subject
+          const groups = new Map<string, typeof standaloneNotes>();
+          for (const note of standaloneNotes) {
+            const key = note.subject || note.title;
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key)!.push(note);
+          }
 
-          return (
-            <div key={note.id}>
-              <div
-                className={`group flex items-center gap-1 rounded-md px-2 py-1.5 text-sm transition cursor-pointer ${
-                  isActive ? "bg-accent text-accent-foreground" : "hover:bg-muted text-foreground"
-                }`}
-                onClick={() => {
-                  onSelectStandaloneNote(note.id);
-                  if (!isExpanded) toggleNote(note.id);
-                }}
-              >
-                <button
-                  className="h-4 w-4 p-0 flex items-center justify-center shrink-0"
-                  onClick={(e) => { e.stopPropagation(); toggleNote(note.id); }}
-                >
-                  {isExpanded
-                    ? <ChevronDown className="h-3 w-3" />
-                    : <ChevronRight className="h-3 w-3" />}
-                </button>
+          return Array.from(groups.entries()).map(([subject, pages]) => {
+            // Use the oldest note's id as the stable folder key
+            const folderId = pages[pages.length - 1].id;
+            const isExpanded = expandedNotes.has(folderId);
+            const isFolderActive = pages.some((p) => p.id === activeStandaloneNoteId);
+            // Sort pages newest first
+            const sortedPages = [...pages].sort((a, b) => b.createdAt - a.createdAt);
 
-                {isExpanded
-                  ? <FolderOpen className="h-4 w-4 shrink-0 text-primary/70" />
-                  : <NotebookPen className="h-4 w-4 shrink-0 text-primary/70" />}
-
-                <span className="flex-1 truncate font-medium">
-                  {note.subject || note.title}
-                </span>
-
-                <button
-                  className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive p-0.5 shrink-0"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (confirm(`Delete note "${note.subject || note.title}"?`))
-                      onDeleteStandaloneNote(note.id);
+            return (
+              <div key={folderId}>
+                {/* Folder row */}
+                <div
+                  className={`group flex items-center gap-1 rounded-md px-2 py-1.5 text-sm transition cursor-pointer ${
+                    isFolderActive && !isExpanded ? "bg-accent text-accent-foreground" : "hover:bg-muted text-foreground"
+                  }`}
+                  onClick={() => {
+                    toggleNote(folderId);
+                    onSelectStandaloneNote(sortedPages[0].id);
                   }}
                 >
-                  <Trash2 className="h-3 w-3" />
-                </button>
-              </div>
-
-              {isExpanded && (
-                <div className="ml-6 mt-0.5">
                   <button
-                    onClick={() => onSelectStandaloneNote(note.id)}
-                    className={`w-full flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition ${
-                      isActive
-                        ? "bg-accent/50 text-accent-foreground"
-                        : "hover:bg-muted/50 text-foreground"
-                    }`}
+                    className="h-4 w-4 p-0 flex items-center justify-center shrink-0"
+                    onClick={(e) => { e.stopPropagation(); toggleNote(folderId); }}
                   >
-                    <StickyNote className="h-3 w-3 shrink-0 opacity-70" />
-                    <span className="truncate">
-                      {new Date(note.createdAt).toLocaleDateString("en-US", {
-                        weekday: "short", month: "short", day: "numeric",
-                      })}
-                    </span>
+                    {isExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                  </button>
+
+                  {isExpanded
+                    ? <FolderOpen className="h-4 w-4 shrink-0 text-primary/70" />
+                    : <NotebookPen className="h-4 w-4 shrink-0 text-primary/70" />}
+
+                  <span className="flex-1 truncate font-medium">{subject}</span>
+                  <span className="text-xs text-muted-foreground opacity-60 group-hover:opacity-0 transition-opacity">
+                    {pages.length}
+                  </span>
+
+                  <button
+                    className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-primary p-0.5 shrink-0"
+                    title="Add new page"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onNewPage(subject);
+                      setExpandedNotes((prev) => new Set(prev).add(folderId));
+                    }}
+                  >
+                    <Plus className="h-3 w-3" />
+                  </button>
+                  <button
+                    className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive p-0.5 shrink-0"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (confirm(`Delete all pages in "${subject}"?`))
+                        pages.forEach((p) => onDeleteStandaloneNote(p.id));
+                    }}
+                  >
+                    <Trash2 className="h-3 w-3" />
                   </button>
                 </div>
-              )}
-            </div>
-          );
-        })}
+
+                {/* Pages under folder */}
+                {isExpanded && (
+                  <div className="ml-6 mt-0.5 space-y-0.5">
+                    {sortedPages.map((page) => {
+                      const isPageActive = activeStandaloneNoteId === page.id;
+                      return (
+                        <div key={page.id} className="group/page flex items-center gap-1">
+                          <button
+                            onClick={() => onSelectStandaloneNote(page.id)}
+                            className={`flex-1 flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition ${
+                              isPageActive
+                                ? "bg-accent/50 text-accent-foreground"
+                                : "hover:bg-muted/50 text-foreground"
+                            }`}
+                          >
+                            <StickyNote className="h-3 w-3 shrink-0 opacity-70" />
+                            <span className="truncate">{page.title}</span>
+                          </button>
+                          <button
+                            className="opacity-0 group-hover/page:opacity-100 text-muted-foreground hover:text-destructive p-0.5 shrink-0"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (confirm(`Delete page "${page.title}"?`))
+                                onDeleteStandaloneNote(page.id);
+                            }}
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          });
+        })()}
 
         {/* Divider between notes and workspaces */}
         {standaloneNotes.length > 0 && workspaces.length > 0 && (
@@ -255,7 +296,7 @@ export function DocSidebar({
                 className={`group flex items-center gap-1 rounded-md px-2 py-1.5 text-sm transition cursor-pointer ${
                   isActive ? "bg-accent text-accent-foreground" : "hover:bg-muted text-foreground"
                 }`}
-                onClick={() => onSelectWorkspace(workspace.id)}
+                onClick={() => { onSelectWorkspace(workspace.id); if (!isExpanded) toggleWorkspace(workspace.id); }}
               >
                 <button
                   className="h-4 w-4 p-0 flex items-center justify-center shrink-0"

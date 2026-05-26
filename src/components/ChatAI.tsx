@@ -7,9 +7,8 @@ interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
-  thinking?: string;
   timestamp: number;
-  chatbotType?: 'zai' | 'deepai';
+  chatbotType?: 'groq' | 'deepai';
 }
 
 interface ChatAIProps {
@@ -22,91 +21,61 @@ export function ChatAI({ isVisible, onToggle, onInsertToNotes }: ChatAIProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [token, setToken] = useState("");
-  const [cookie, setCookie] = useState("");
-  const [model, setModel] = useState("GLM-5-Turbo");
-  const [proxyPort, setProxyPort] = useState("8788");
-  const [showThinking, setShowThinking] = useState(true);
   const [isMinimized, setIsMinimized] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [proxyStatus, setProxyStatus] = useState<'online' | 'offline' | 'checking'>('checking');
-  const [selectedChatbot, setSelectedChatbot] = useState<'zai' | 'deepai'>('zai');
+  const [selectedChatbot, setSelectedChatbot] = useState<'groq' | 'deepai'>('groq');
+
+  // Groq state
+  const [groqApiKey, setGroqApiKey] = useState("");
+  const [groqModel, setGroqModel] = useState("llama-3.3-70b-versatile");
+
+  // DeepAI state
   const [deepaiModel, setDeepaiModel] = useState('standard');
-  const [deepaiTools, setDeepaiTools] = useState(['image_generator', 'image_editor']);
-  const [deepaiProxyPort, setDeepaiProxyPort] = useState("8789");
   const [deepaiProxyStatus, setDeepaiProxyStatus] = useState<'online' | 'offline' | 'checking'>('checking');
-  
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  // Load saved tokens from localStorage
+  // Load saved settings
   useEffect(() => {
-    const savedZaiToken = localStorage.getItem('zai-glm-bearer-token');
-    if (savedZaiToken) {
-      setToken(savedZaiToken);
-    }
-    const savedDeepaiToken = localStorage.getItem('deepai-token');
-    if (savedDeepaiToken) {
-      // DeepAI uses different token storage
-    }
+    const key = localStorage.getItem('groq-api-key');
+    if (key) setGroqApiKey(key);
+    const model = localStorage.getItem('groq-model');
+    if (model) setGroqModel(model);
+    const chatbot = localStorage.getItem('selected-chatbot') as 'groq' | 'deepai' | null;
+    if (chatbot) setSelectedChatbot(chatbot);
   }, []);
 
-  // Check proxy status for Z.ai
+  // Persist settings
   useEffect(() => {
-    const checkProxy = async () => {
-      try {
-        const response = await fetch(`http://localhost:${proxyPort}/ping`, { 
-          method: 'GET',
-          signal: AbortSignal.timeout(1500)
-        });
-        if (response.ok) {
-          setProxyStatus('online');
-        } else {
-          setProxyStatus('offline');
-        }
-      } catch {
-        setProxyStatus('offline');
-      }
-    };
+    if (groqApiKey) localStorage.setItem('groq-api-key', groqApiKey);
+    else localStorage.removeItem('groq-api-key');
+  }, [groqApiKey]);
 
-    checkProxy();
-    const interval = setInterval(checkProxy, 5000);
-    return () => clearInterval(interval);
-  }, [proxyPort]);
-
-  // Check proxy status for DeepAI
   useEffect(() => {
-    const checkDeepaiProxy = async () => {
+    localStorage.setItem('groq-model', groqModel);
+  }, [groqModel]);
+
+  useEffect(() => {
+    localStorage.setItem('selected-chatbot', selectedChatbot);
+  }, [selectedChatbot]);
+
+  // Check DeepAI proxy status
+  useEffect(() => {
+    const check = async () => {
       try {
-        const response = await fetch(`http://localhost:${deepaiProxyPort}/ping`, { 
-          method: 'GET',
-          signal: AbortSignal.timeout(1500)
-        });
-        if (response.ok) {
-          setDeepaiProxyStatus('online');
-        } else {
-          setDeepaiProxyStatus('offline');
-        }
+        const r = await fetch('/proxy/deepai-ping');
+        setDeepaiProxyStatus(r.ok ? 'online' : 'offline');
       } catch {
         setDeepaiProxyStatus('offline');
       }
     };
-
-    checkDeepaiProxy();
-    const interval = setInterval(checkDeepaiProxy, 5000);
+    check();
+    const interval = setInterval(check, 3000);
     return () => clearInterval(interval);
-  }, [deepaiProxyPort]);
+  }, [isVisible]);
 
-  // Save token to localStorage
-  useEffect(() => {
-    if (token) {
-      localStorage.setItem('zai-glm-bearer-token', token);
-    } else {
-      localStorage.removeItem('zai-glm-bearer-token');
-    }
-  }, [token]);
-
-  // Scroll to bottom when messages change
+  // Scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
@@ -114,29 +83,15 @@ export function ChatAI({ isVisible, onToggle, onInsertToNotes }: ChatAIProps) {
   const handleSendMessage = async () => {
     if (!input.trim() || isLoading) return;
 
-    // Guard: require token before sending
-    if (selectedChatbot === 'zai' && !token) {
+    if (selectedChatbot === 'groq' && !groqApiKey) {
       setShowSettings(true);
-      const hint: ChatMessage = {
+      setMessages(prev => [...prev, {
         id: crypto.randomUUID(),
         role: 'assistant',
-        content: '⚙️ Please add your **Z.ai Bearer token** in Settings (gear icon) to start chatting.',
+        content: '⚙️ Please add your **Groq API key** in Settings. Get a free key at **console.groq.com**.',
         timestamp: Date.now(),
-        chatbotType: 'zai',
-      };
-      setMessages(prev => [...prev, hint]);
-      return;
-    }
-
-    if (selectedChatbot === 'zai' && proxyStatus === 'offline') {
-      const hint: ChatMessage = {
-        id: crypto.randomUUID(),
-        role: 'assistant',
-        content: `⚠️ Proxy server is offline. Start it with:\n\`\`\`\nnode server.js\n\`\`\`\nThen try again.`,
-        timestamp: Date.now(),
-        chatbotType: 'zai',
-      };
-      setMessages(prev => [...prev, hint]);
+        chatbotType: 'groq',
+      }]);
       return;
     }
 
@@ -145,88 +100,58 @@ export function ChatAI({ isVisible, onToggle, onInsertToNotes }: ChatAIProps) {
       role: 'user',
       content: input.trim(),
       timestamp: Date.now(),
-      chatbotType: selectedChatbot
+      chatbotType: selectedChatbot,
     };
 
     setMessages(prev => [...prev, userMessage]);
     setInput("");
     setIsLoading(true);
-
     abortControllerRef.current = new AbortController();
 
     try {
-      if (selectedChatbot === 'zai') {
-        await handleZaiMessage(userMessage);
-      } else if (selectedChatbot === 'deepai') {
+      if (selectedChatbot === 'groq') {
+        await handleGroqMessage(userMessage);
+      } else {
         await handleDeepaiMessage(userMessage);
       }
     } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') {
-        // user cancelled — no message needed
-      } else {
-        console.error('Chat error:', error);
-        const msg = error instanceof Error ? error.message : 'Unknown error';
-        const isAuthError = msg.includes('401') || msg.includes('403') || msg.includes('Unauthorized');
-        const errorMessage: ChatMessage = {
-          id: crypto.randomUUID(),
-          role: 'assistant',
-          content: isAuthError
-            ? '🔑 Authentication failed. Your Z.ai token may have expired — open Settings and paste a fresh token.'
-            : `Error: ${msg}`,
-          timestamp: Date.now(),
-          chatbotType: selectedChatbot
-        };
-        setMessages(prev => [...prev, errorMessage]);
-        if (isAuthError) setShowSettings(true);
-      }
+      if (error instanceof Error && error.name === 'AbortError') return;
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      const isAuth = msg.includes('401') || msg.includes('invalid_api_key') || msg.includes('403');
+      setMessages(prev => [...prev, {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: isAuth
+          ? '🔑 Invalid Groq API key. Open Settings and paste a valid key from console.groq.com.'
+          : `❌ Error: ${msg}`,
+        timestamp: Date.now(),
+        chatbotType: selectedChatbot,
+      }]);
+      if (isAuth) setShowSettings(true);
     } finally {
       setIsLoading(false);
       abortControllerRef.current = null;
     }
   };
 
-  const handleZaiMessage = async (userMessage: ChatMessage) => {
-    if (!token) {
-      throw new Error('Z.ai token is required');
-    }
-
-    const chatHistory = messages.concat(userMessage).map(msg => ({
-      role: msg.role,
-      content: msg.content
+  const handleGroqMessage = async (userMessage: ChatMessage) => {
+    const chatHistory = messages.concat(userMessage).map(m => ({
+      role: m.role,
+      content: m.content,
     }));
 
-    const payload = {
-      stream: true,
-      model: model,
-      messages: chatHistory,
-      chat_id: crypto.randomUUID(),
-      current_user_message_id: crypto.randomUUID(),
-      current_user_message_parent_id: null,
-      extra: {},
-      params: {},
-      features: {
-        image_generation: false,
-        web_search: false,
-        auto_web_search: false,
-        preview_mode: true,
-        flags: []
-      },
-      background_tasks: { title_generation: false, tags_generation: false },
-      variables: {}
-    };
-
-    const timestamp = Date.now();
-    const url = `http://localhost:${proxyPort}?timestamp=${timestamp}&requestId=${userMessage.id}`;
-
-    const response = await fetch(url, {
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Token': token,
-        'X-Cookie': cookie,
+        Authorization: `Bearer ${groqApiKey}`,
       },
-      body: JSON.stringify(payload),
-      signal: abortControllerRef.current?.signal
+      body: JSON.stringify({
+        model: groqModel,
+        messages: chatHistory,
+        stream: true,
+      }),
+      signal: abortControllerRef.current?.signal,
     });
 
     if (!response.ok) {
@@ -234,50 +159,35 @@ export function ChatAI({ isVisible, onToggle, onInsertToNotes }: ChatAIProps) {
       throw new Error(`HTTP ${response.status}: ${body.slice(0, 200) || response.statusText}`);
     }
 
-    const reader = response.body?.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let thinkingText = '';
-    let answerText = '';
-
     const assistantMessage: ChatMessage = {
       id: crypto.randomUUID(),
       role: 'assistant',
       content: '',
-      thinking: '',
       timestamp: Date.now(),
-      chatbotType: 'zai'
+      chatbotType: 'groq',
     };
-
     setMessages(prev => [...prev, assistantMessage]);
+
+    const reader = response.body?.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let answerText = '';
 
     const processLine = (line: string) => {
       if (!line.startsWith('data: ')) return;
       const raw = line.slice(6).trim();
       if (!raw || raw === '[DONE]') return;
-      
       try {
         const evt = JSON.parse(raw);
-        const d = evt.data;
-        if (!d) return;
-        
-        const chunk = d.delta_content || d.edit_content;
-        if (!chunk) return;
-        
-        if (d.phase === 'thinking') {
-          thinkingText += chunk;
-          assistantMessage.thinking = thinkingText;
-        } else if (d.phase === 'answer' || d.phase === 'other') {
-          answerText += chunk;
+        const delta = evt.choices?.[0]?.delta?.content;
+        if (delta) {
+          answerText += delta;
           assistantMessage.content = answerText;
+          setMessages(prev => prev.map(m =>
+            m.id === assistantMessage.id ? { ...assistantMessage } : m
+          ));
         }
-        
-        setMessages(prev => prev.map(msg => 
-          msg.id === assistantMessage.id ? assistantMessage : msg
-        ));
-      } catch (e) {
-        console.warn('JSON parse fail:', raw);
-      }
+      } catch { /* ignore parse errors */ }
     };
 
     if (reader) {
@@ -287,8 +197,7 @@ export function ChatAI({ isVisible, onToggle, onInsertToNotes }: ChatAIProps) {
           if (buffer.trim()) processLine(buffer.trim());
           break;
         }
-        const chunk = decoder.decode(value, { stream: true });
-        buffer += chunk;
+        buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
         for (const line of lines) processLine(line);
@@ -297,9 +206,9 @@ export function ChatAI({ isVisible, onToggle, onInsertToNotes }: ChatAIProps) {
   };
 
   const handleDeepaiMessage = async (userMessage: ChatMessage) => {
-    const chatHistory = messages.concat(userMessage).map(msg => ({
-      role: msg.role,
-      content: msg.content
+    const chatHistory = messages.concat(userMessage).map(m => ({
+      role: m.role,
+      content: m.content,
     }));
 
     const params = new URLSearchParams({
@@ -309,65 +218,51 @@ export function ChatAI({ isVisible, onToggle, onInsertToNotes }: ChatAIProps) {
       sensitivity_request_id: crypto.randomUUID(),
       hacker_is_stinky: 'very_stinky',
       chatHistory: JSON.stringify(chatHistory),
-      enabled_tools: JSON.stringify(deepaiTools),
+      enabled_tools: JSON.stringify(['image_generator', 'image_editor']),
     });
 
-    const response = await fetch(`http://localhost:${deepaiProxyPort}/api`, {
+    const response = await fetch('/proxy/deepai-api', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: params.toString(),
-      signal: abortControllerRef.current?.signal
+      signal: abortControllerRef.current?.signal,
     });
 
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
+    if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
 
     const assistantMessage: ChatMessage = {
       id: crypto.randomUUID(),
       role: 'assistant',
       content: '',
       timestamp: Date.now(),
-      chatbotType: 'deepai'
+      chatbotType: 'deepai',
     };
-
     setMessages(prev => [...prev, assistantMessage]);
 
     const reader = response.body?.getReader();
     const decoder = new TextDecoder();
     let fullText = '';
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      const chunk = decoder.decode(value, { stream: true });
-      fullText += chunk;
-      assistantMessage.content = fullText;
-      
-      setMessages(prev => prev.map(msg => 
-        msg.id === assistantMessage.id ? assistantMessage : msg
-      ));
+    if (reader) {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        fullText += decoder.decode(value, { stream: true });
+        assistantMessage.content = fullText;
+        setMessages(prev => prev.map(m =>
+          m.id === assistantMessage.id ? { ...assistantMessage } : m
+        ));
+      }
     }
   };
 
   const handleStopGeneration = () => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      setIsLoading(false);
-    }
+    abortControllerRef.current?.abort();
+    setIsLoading(false);
   };
 
-  const handleClearChat = () => {
-    setMessages([]);
-  };
-
-  const handleInsertToNotes = (content: string) => {
-    if (onInsertToNotes) {
-      onInsertToNotes(content);
-    }
-  };
-
-  const renderMarkdown = (text: string) => markdownToHtml(text);
+  const statusDot = (status: 'online' | 'offline' | 'checking') =>
+    status === 'online' ? 'bg-green-500' : status === 'offline' ? 'bg-red-500' : 'bg-yellow-500';
 
   if (!isVisible) {
     return (
@@ -388,57 +283,41 @@ export function ChatAI({ isVisible, onToggle, onInsertToNotes }: ChatAIProps) {
         <div className="flex items-center gap-2">
           <Bot className="h-4 w-4" />
           <span className="font-medium text-sm">
-            {selectedChatbot === 'zai' ? 'Z.ai GLM' : 'DeepAI'}
+            {selectedChatbot === 'groq' ? 'Groq AI' : 'DeepAI'}
           </span>
-          <div className={`w-2 h-2 rounded-full ${
-            selectedChatbot === 'zai' ? 
-              (proxyStatus === 'online' ? 'bg-green-500' : proxyStatus === 'offline' ? 'bg-red-500' : 'bg-yellow-500') :
-              (deepaiProxyStatus === 'online' ? 'bg-green-500' : deepaiProxyStatus === 'offline' ? 'bg-red-500' : 'bg-yellow-500')
-          }`} />
+          {selectedChatbot === 'groq' ? (
+            <div className={`w-2 h-2 rounded-full ${groqApiKey ? 'bg-green-500' : 'bg-red-500'}`} />
+          ) : (
+            <div className={`w-2 h-2 rounded-full ${statusDot(deepaiProxyStatus)}`} />
+          )}
         </div>
         <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-6 w-6"
-            onClick={() => setIsMinimized(!isMinimized)}
-          >
+          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setIsMinimized(!isMinimized)}>
             {isMinimized ? <Maximize2 className="h-3 w-3" /> : <Minimize2 className="h-3 w-3" />}
           </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-6 w-6"
-            onClick={() => setShowSettings(!showSettings)}
-          >
+          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setShowSettings(!showSettings)}>
             <Settings className="h-3 w-3" />
           </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-6 w-6"
-            onClick={onToggle}
-          >
+          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onToggle}>
             <X className="h-3 w-3" />
           </Button>
         </div>
       </div>
 
-      {/* Settings Panel */}
+      {/* Settings */}
       {showSettings && (
         <div className="p-3 border-b border-border bg-muted/50 max-h-64 overflow-y-auto">
           <div className="space-y-3 text-xs">
-            {/* Chatbot Selection */}
             <div>
               <label className="block font-medium mb-2">Select Chatbot</label>
               <div className="flex gap-2">
                 <Button
-                  variant={selectedChatbot === 'zai' ? 'default' : 'outline'}
+                  variant={selectedChatbot === 'groq' ? 'default' : 'outline'}
                   size="sm"
-                  onClick={() => setSelectedChatbot('zai')}
+                  onClick={() => setSelectedChatbot('groq')}
                   className="flex-1 text-xs"
                 >
-                  Z.ai GLM
+                  Groq AI
                 </Button>
                 <Button
                   variant={selectedChatbot === 'deepai' ? 'default' : 'outline'}
@@ -451,70 +330,39 @@ export function ChatAI({ isVisible, onToggle, onInsertToNotes }: ChatAIProps) {
               </div>
             </div>
 
-            {/* Z.ai Configuration */}
-            {selectedChatbot === 'zai' && (
+            {selectedChatbot === 'groq' && (
               <div className="space-y-2 border-t pt-2">
-                <div className="font-medium text-xs">Z.ai Configuration</div>
+                <div className="font-medium">Groq Configuration</div>
                 <div>
-                  <label className="block font-medium mb-1">Bearer Token</label>
+                  <label className="block font-medium mb-1">API Key</label>
                   <input
                     type="password"
-                    value={token}
-                    onChange={(e) => setToken(e.target.value)}
-                    placeholder="Z.ai Bearer token..."
+                    value={groqApiKey}
+                    onChange={(e) => setGroqApiKey(e.target.value)}
+                    placeholder="gsk_..."
                     className="w-full px-2 py-1 bg-background border border-border rounded text-xs"
                   />
+                  <p className="text-muted-foreground mt-0.5">Free key at console.groq.com</p>
                 </div>
                 <div>
-                  <label className="block font-medium mb-1">Cookie (optional)</label>
-                  <input
-                    type="text"
-                    value={cookie}
-                    onChange={(e) => setCookie(e.target.value)}
-                    placeholder="Cookie string..."
+                  <label className="block font-medium mb-1">Model</label>
+                  <select
+                    value={groqModel}
+                    onChange={(e) => setGroqModel(e.target.value)}
                     className="w-full px-2 py-1 bg-background border border-border rounded text-xs"
-                  />
-                </div>
-                <div className="flex gap-2">
-                  <div className="flex-1">
-                    <label className="block font-medium mb-1">Model</label>
-                    <select
-                      value={model}
-                      onChange={(e) => setModel(e.target.value)}
-                      className="w-full px-2 py-1 bg-background border border-border rounded text-xs"
-                    >
-                      <option value="GLM-5-Turbo">GLM-5-Turbo</option>
-                      <option value="GLM-5">GLM-5</option>
-                      <option value="GLM-5.1">GLM-5.1</option>
-                    </select>
-                  </div>
-                  <div className="flex-1">
-                    <label className="block font-medium mb-1">Proxy Port</label>
-                    <input
-                      type="text"
-                      value={proxyPort}
-                      onChange={(e) => setProxyPort(e.target.value)}
-                      className="w-full px-2 py-1 bg-background border border-border rounded text-xs"
-                    />
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    id="showThinking"
-                    checked={showThinking}
-                    onChange={(e) => setShowThinking(e.target.checked)}
-                    className="rounded"
-                  />
-                  <label htmlFor="showThinking" className="text-xs">Show thinking</label>
+                  >
+                    <option value="llama-3.3-70b-versatile">Llama 3.3 70B</option>
+                    <option value="llama-3.1-8b-instant">Llama 3.1 8B (fast)</option>
+                    <option value="mixtral-8x7b-32768">Mixtral 8x7B</option>
+                    <option value="gemma2-9b-it">Gemma 2 9B</option>
+                  </select>
                 </div>
               </div>
             )}
 
-            {/* DeepAI Configuration */}
             {selectedChatbot === 'deepai' && (
               <div className="space-y-2 border-t pt-2">
-                <div className="font-medium text-xs">DeepAI Configuration</div>
+                <div className="font-medium">DeepAI Configuration</div>
                 <div>
                   <label className="block font-medium mb-1">Model</label>
                   <select
@@ -528,49 +376,13 @@ export function ChatAI({ isVisible, onToggle, onInsertToNotes }: ChatAIProps) {
                     <option value="precise">Precise</option>
                   </select>
                 </div>
-                <div>
-                  <label className="block font-medium mb-1">Proxy Port</label>
-                  <input
-                    type="text"
-                    value={deepaiProxyPort}
-                    onChange={(e) => setDeepaiProxyPort(e.target.value)}
-                    className="w-full px-2 py-1 bg-background border border-border rounded text-xs"
-                  />
-                </div>
-                <div>
-                  <label className="block font-medium mb-1">Enabled Tools</label>
-                  <div className="space-y-1">
-                    {['image_generator', 'image_editor'].map((tool) => (
-                      <div key={tool} className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          id={tool}
-                          checked={deepaiTools.includes(tool)}
-                          onChange={(e) => {
-                            if (e.target.checked) {
-                              setDeepaiTools([...deepaiTools, tool]);
-                            } else {
-                              setDeepaiTools(deepaiTools.filter(t => t !== tool));
-                            }
-                          }}
-                          className="rounded"
-                        />
-                        <label htmlFor={tool} className="text-xs capitalize">
-                          {tool.replace('_', ' ')}
-                        </label>
-                      </div>
-                    ))}
-                  </div>
+                <div className={`text-xs ${deepaiProxyStatus === 'online' ? 'text-green-600' : 'text-red-500'}`}>
+                  Proxy: {deepaiProxyStatus} {deepaiProxyStatus === 'offline' && '— run node server.js'}
                 </div>
               </div>
             )}
 
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleClearChat}
-              className="w-full text-xs"
-            >
+            <Button variant="outline" size="sm" onClick={() => setMessages([])} className="w-full text-xs">
               Clear Chat
             </Button>
           </div>
@@ -584,49 +396,31 @@ export function ChatAI({ isVisible, onToggle, onInsertToNotes }: ChatAIProps) {
             {messages.length === 0 ? (
               <div className="text-center text-muted-foreground text-sm py-8">
                 <Bot className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                <p>Start a conversation with {selectedChatbot === 'zai' ? 'Z.ai GLM' : 'DeepAI'}</p>
-                {selectedChatbot === 'zai' && !token && (
-                  <p className="text-xs mt-2 text-red-500">Please set your Z.ai Bearer token in settings</p>
-                )}
-                {selectedChatbot === 'deepai' && deepaiProxyStatus === 'offline' && (
-                  <p className="text-xs mt-2 text-red-500">DeepAI proxy is offline. Start the DeepAI server.</p>
+                <p>Start a conversation with {selectedChatbot === 'groq' ? 'Groq AI' : 'DeepAI'}</p>
+                {selectedChatbot === 'groq' && !groqApiKey && (
+                  <p className="text-xs mt-2 text-red-500">Add your Groq API key in Settings</p>
                 )}
               </div>
             ) : (
               messages.map((message) => (
-                <div
-                  key={message.id}
-                  className={`flex gap-2 ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                >
+                <div key={message.id} className={`flex gap-2 ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                   {message.role === 'assistant' && (
                     <div className="w-6 h-6 rounded bg-primary/10 flex items-center justify-center flex-shrink-0">
                       <Bot className="h-3 w-3" />
                     </div>
                   )}
                   <div className={`max-w-[80%] ${message.role === 'user' ? 'order-first' : ''}`}>
-                    <div
-                      className={`rounded-lg p-2 text-sm ${
-                        message.role === 'user'
-                          ? 'bg-primary text-primary-foreground'
-                          : 'bg-muted'
-                      }`}
-                    >
-                      {message.thinking && showThinking && (
-                        <div className="mb-2 p-2 bg-background/50 rounded text-xs italic border-l-2 border-primary">
-                          <div className="font-medium mb-1">Thinking:</div>
-                          <div className="whitespace-pre-wrap">{message.thinking}</div>
-                        </div>
-                      )}
+                    <div className={`rounded-lg p-2 text-sm ${message.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted'}`}>
                       <div
                         className="chat-md"
-                        dangerouslySetInnerHTML={{ __html: renderMarkdown(message.content) }}
+                        dangerouslySetInnerHTML={{ __html: markdownToHtml(message.content) }}
                       />
                     </div>
                     {message.role === 'assistant' && message.content && (
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => handleInsertToNotes(message.content)}
+                        onClick={() => onInsertToNotes?.(message.content)}
                         className="mt-1 text-xs h-6 px-2"
                       >
                         Add to Notes
@@ -665,24 +459,19 @@ export function ChatAI({ isVisible, onToggle, onInsertToNotes }: ChatAIProps) {
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && !e.shiftKey && handleSendMessage()}
+                onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSendMessage()}
                 placeholder="Type a message..."
                 className="flex-1 px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                disabled={isLoading || (selectedChatbot === 'zai' && !token) || (selectedChatbot === 'deepai' && deepaiProxyStatus === 'offline')}
+                disabled={isLoading || (selectedChatbot === 'groq' && !groqApiKey)}
               />
               {isLoading ? (
-                <Button
-                  variant="outline"
-                  size="icon"
-                  onClick={handleStopGeneration}
-                  className="shrink-0"
-                >
+                <Button variant="outline" size="icon" onClick={handleStopGeneration} className="shrink-0">
                   <X className="h-4 w-4" />
                 </Button>
               ) : (
                 <Button
                   onClick={handleSendMessage}
-                  disabled={!input.trim() || (selectedChatbot === 'zai' && !token) || (selectedChatbot === 'deepai' && deepaiProxyStatus === 'offline')}
+                  disabled={!input.trim() || (selectedChatbot === 'groq' && !groqApiKey)}
                   size="icon"
                   className="shrink-0"
                 >
@@ -690,11 +479,8 @@ export function ChatAI({ isVisible, onToggle, onInsertToNotes }: ChatAIProps) {
                 </Button>
               )}
             </div>
-            {selectedChatbot === 'zai' && !token && (
-              <p className="text-xs text-red-500 mt-1">Please configure your Z.ai Bearer token in settings</p>
-            )}
-            {selectedChatbot === 'deepai' && deepaiProxyStatus === 'offline' && (
-              <p className="text-xs text-red-500 mt-1">DeepAI proxy is offline. Start the DeepAI server.</p>
+            {selectedChatbot === 'groq' && !groqApiKey && (
+              <p className="text-xs text-red-500 mt-1">Add your Groq API key in Settings (free at console.groq.com)</p>
             )}
           </div>
         </>

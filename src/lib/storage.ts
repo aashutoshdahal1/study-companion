@@ -121,6 +121,14 @@ export const storage = {
     return hybridStorage.saveStandaloneNote(note);
   },
 
+  async saveToLocalOnly(note: StandaloneNote): Promise<void> {
+    return hybridStorage.saveToLocalOnly(note);
+  },
+
+  async syncStandaloneNoteToMongo(note: StandaloneNote): Promise<void> {
+    return hybridStorage.syncStandaloneNoteToMongo(note);
+  },
+
   async deleteStandaloneNote(id: string): Promise<void> {
     return hybridStorage.deleteStandaloneNote(id);
   },

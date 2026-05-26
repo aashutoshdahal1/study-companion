@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
 import { X, ChevronLeft, ChevronRight, Loader2, Sparkles, RotateCcw, FileText, BookOpen, Shuffle } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { storage, type Flashcard } from "@/lib/storage";
+import { storage } from "@/lib/storage";
+
+type Flashcard = { question: string; answer: string };
 import { toast } from "sonner";
 
 interface FlashcardViewerProps {
@@ -57,104 +59,20 @@ Study material:
 ${text}`;
 };
 
-async function callDeepAI(text: string, signal: AbortSignal): Promise<string> {
-  const params = new URLSearchParams({
-    chat_style: "chat",
-    model: "standard",
-    session_uuid: crypto.randomUUID(),
-    sensitivity_request_id: crypto.randomUUID(),
-    hacker_is_stinky: "very_stinky",
-    chatHistory: JSON.stringify([{ role: "user", content: FLASHCARD_PROMPT(text) }]),
-    enabled_tools: JSON.stringify([]),
-  });
+async function callGroq(prompt: string, signal: AbortSignal): Promise<string> {
+  const apiKey = localStorage.getItem("groq-api-key") || "";
+  const model = localStorage.getItem("groq-model") || "llama-3.3-70b-versatile";
+  if (!apiKey) throw new Error("Groq API key not configured. Add your key in Chat Settings.");
 
-  const response = await fetch("http://localhost:8787/api", {
+  const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: params.toString(),
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({ model, messages: [{ role: "user", content: prompt }], temperature: 0.4 }),
     signal,
   });
-  if (!response.ok) throw new Error(`DeepAI HTTP ${response.status}`);
-
-  const reader = response.body?.getReader();
-  const decoder = new TextDecoder();
-  let result = "";
-
-  if (reader) {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      result += decoder.decode(value, { stream: true });
-    }
-  }
-  return result;
-}
-
-async function callZaiProxy(text: string, token: string, signal: AbortSignal): Promise<string> {
-  const payload = {
-    stream: true,
-    model: "GLM-5-Turbo",
-    messages: [{ role: "user", content: FLASHCARD_PROMPT(text) }],
-    chat_id: crypto.randomUUID(),
-    current_user_message_id: crypto.randomUUID(),
-    current_user_message_parent_id: null,
-    extra: {},
-    params: {},
-    features: { image_generation: false, web_search: false, auto_web_search: false, preview_mode: true, flags: [] },
-    background_tasks: { title_generation: false, tags_generation: false },
-    variables: {},
-  };
-
-  const response = await fetch(`http://localhost:8788?timestamp=${Date.now()}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Token": token },
-    body: JSON.stringify(payload),
-    signal,
-  });
-  if (!response.ok) throw new Error(`Z.ai HTTP ${response.status}`);
-
-  const reader = response.body?.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let answerText = '';
-  const rawLines: string[] = [];
-
-  const processLine = (line: string) => {
-    rawLines.push(line);
-    if (!line.startsWith('data: ')) return;
-    const raw = line.slice(6).trim();
-    if (!raw || raw === '[DONE]') return;
-    try {
-      const evt = JSON.parse(raw);
-      const d = evt.data;
-      if (!d) return;
-      const chunk = d.delta_content || d.edit_content;
-      if (!chunk) return;
-      answerText += chunk;
-    } catch (e) {
-      console.warn('JSON parse fail:', raw);
-    }
-  };
-
-  if (reader) {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) {
-        if (buffer.trim()) processLine(buffer.trim());
-        break;
-      }
-      const chunk = decoder.decode(value, { stream: true });
-      buffer += chunk;
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-      for (const line of lines) processLine(line);
-    }
-  }
-
-  if (!answerText) {
-    console.warn('Z.ai returned empty — raw lines sample:', rawLines.slice(0, 10));
-  }
-  return answerText;
+  if (!response.ok) throw new Error(`Groq HTTP ${response.status}`);
+  const json = await response.json();
+  return json.choices?.[0]?.message?.content ?? "";
 }
 
 export function FlashcardViewer({ isOpen, onClose, docId, notesHtml, pageText, currentPage }: FlashcardViewerProps) {
@@ -168,7 +86,7 @@ export function FlashcardViewer({ isOpen, onClose, docId, notesHtml, pageText, c
     if (!docId || !isOpen) return;
     storage.getDeck(docId).then((deck) => {
       if (deck && deck.cards.length > 0) {
-        setCards(deck.cards);
+        setCards(deck.cards.map((c) => ({ question: c.front, answer: c.back })));
         setCurrentIndex(0);
         setIsFlipped(false);
       } else {
@@ -178,8 +96,6 @@ export function FlashcardViewer({ isOpen, onClose, docId, notesHtml, pageText, c
   }, [docId, isOpen]);
 
   const handleGenerate = useCallback(async () => {
-    if (!docId) return;
-
     const rawText = source === "notes" ? stripHtml(notesHtml) : (pageText || "");
     if (!rawText.trim()) {
       toast.error(
@@ -194,31 +110,13 @@ export function FlashcardViewer({ isOpen, onClose, docId, notesHtml, pageText, c
     const abort = new AbortController();
 
     try {
-      const token = localStorage.getItem("zai-glm-bearer-token") || "";
       const chunks = splitIntoChunks(rawText);
 
       toast.info(`Processing ${chunks.length} section${chunks.length > 1 ? "s" : ""}…`);
 
       const results = await Promise.all(
         chunks.map(async (chunk) => {
-          let responseText = "";
-
-          if (token) {
-            try {
-              responseText = await callZaiProxy(chunk, token, abort.signal);
-            } catch (err) {
-              console.error("Flashcard - Z.ai error for chunk:", err);
-            }
-          }
-
-          if (!responseText) {
-            try {
-              responseText = await callDeepAI(chunk, abort.signal);
-            } catch (err) {
-              console.error("Flashcard - DeepAI error for chunk:", err);
-            }
-          }
-
+          const responseText = await callGroq(FLASHCARD_PROMPT(chunk), abort.signal);
           return parseFlashcardsFromResponse(responseText);
         })
       );
@@ -242,14 +140,19 @@ export function FlashcardViewer({ isOpen, onClose, docId, notesHtml, pageText, c
       setCards(unique);
       setCurrentIndex(0);
       setIsFlipped(false);
-      await storage.saveDeck({ docId, cards: unique, updatedAt: Date.now() });
+      const deckId = docId ?? `standalone-${btoa(rawText.slice(0, 64)).replace(/[^a-zA-Z0-9]/g, '')}`;
+      await storage.saveDeck({
+        docId: deckId,
+        cards: unique.map((c, i) => ({ front: c.question, back: c.answer, id: String(i) })),
+        updatedAt: Date.now(),
+      });
       toast.success(`Generated ${unique.length} flashcards covering all topics!`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to generate flashcards.");
     } finally {
       setIsGenerating(false);
     }
-  }, [docId, source, notesHtml, pageText]);
+  }, [docId, source, notesHtml, pageText]); // docId kept for optional saveDeck
 
   const goNext = useCallback(() => {
     setIsFlipped(false);
@@ -397,7 +300,7 @@ export function FlashcardViewer({ isOpen, onClose, docId, notesHtml, pageText, c
               {pageText ? `Page ${currentPage ?? ""}` : "Page (extract first)"}
             </Button>
           </div>
-          <Button className="w-full" size="sm" onClick={handleGenerate} disabled={isGenerating || !docId}>
+          <Button className="w-full" size="sm" onClick={handleGenerate} disabled={isGenerating}>
             {isGenerating ? (
               <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Generating…</>
             ) : (

@@ -13,6 +13,7 @@ interface SmartNotesGeneratorProps {
   activeMeta: DocMeta | null;
   totalPages: number;
   currentPage: number;
+  notesHtml?: string;
   onInsertToNotes: (html: string) => void;
 }
 
@@ -282,7 +283,7 @@ export function SmartNotesGenerator({
   activeBlob,
   activeMeta,
   totalPages,
-  currentPage,
+  notesHtml,
   onInsertToNotes,
 }: SmartNotesGeneratorProps) {
   const [fromPage, setFromPage] = useState("1");
@@ -330,44 +331,58 @@ export function SmartNotesGenerator({
   };
 
   const handleGenerate = async () => {
-    if (!activeBlob || !activeMeta) return;
-    const range = validate();
-    if (!range) return;
-
     setError("");
     setStreamedText("");
     abortRef.current = new AbortController();
     const { signal } = abortRef.current;
 
-    // ── Phase 1: Extract ─────────────────────────────────────────────────
-    setPhase("extracting");
-    setExtractProgress(range.from);
-
     let rawText = "";
-    try {
-      const onProgress = (p: number) => setExtractProgress(p);
+    let fromNum = 1;
+    let toNum = 1;
 
-      if (activeMeta.type === "pdf") {
-        rawText = await extractPdfRange(activeBlob, range.from, range.to, onProgress);
-      } else if (activeMeta.type === "pptx") {
-        rawText = await extractPptxRange(activeBlob, range.from, range.to, onProgress);
+    if (!activeBlob || !activeMeta) {
+      // Standalone note — use notesHtml directly
+      const stripped = (notesHtml || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+      if (!stripped) {
+        setError("No note content to generate from. Write some notes first.");
+        return;
       }
-    } catch (e) {
-      if ((e as Error).name === "AbortError") return;
-      setError("Failed to extract text from the document.");
-      setPhase("idle");
-      return;
-    }
+      rawText = stripped;
+      setPhase("generating");
+    } else {
+      const range = validate();
+      if (!range) return;
+      fromNum = range.from;
+      toNum = range.to;
 
-    if (!rawText.trim()) {
-      setError("No extractable text found in those pages.");
-      setPhase("idle");
-      return;
+      // ── Phase 1: Extract ───────────────────────────────────────────────
+      setPhase("extracting");
+      setExtractProgress(range.from);
+
+      try {
+        const onProgress = (p: number) => setExtractProgress(p);
+        if (activeMeta.type === "pdf") {
+          rawText = await extractPdfRange(activeBlob, range.from, range.to, onProgress);
+        } else if (activeMeta.type === "pptx") {
+          rawText = await extractPptxRange(activeBlob, range.from, range.to, onProgress);
+        }
+      } catch (e) {
+        if ((e as Error).name === "AbortError") return;
+        setError("Failed to extract text from the document.");
+        setPhase("idle");
+        return;
+      }
+
+      if (!rawText.trim()) {
+        setError("No extractable text found in those pages.");
+        setPhase("idle");
+        return;
+      }
     }
 
     // ── Phase 2: Generate ────────────────────────────────────────────────
     setPhase("generating");
-    const prompt = NOTES_PROMPT(range.from, range.to, hint, rawText);
+    const prompt = NOTES_PROMPT(fromNum, toNum, hint, rawText);
     const token = localStorage.getItem("zai-glm-bearer-token") || "";
     const onChunk = (chunk: string) =>
       setStreamedText((prev) => prev + chunk);
@@ -439,44 +454,51 @@ export function SmartNotesGenerator({
         {/* Body */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
 
-          {/* Page range inputs */}
-          <div className="space-y-2">
-            <label className="text-xs font-medium">
-              Extract {pageLabel}s
-            </label>
-            <div className="flex items-center gap-2">
-              <div className="flex-1">
-                <span className="text-xs text-muted-foreground block mb-1">From</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={totalPages || 9999}
-                  value={fromPage}
-                  onChange={(e) => { setFromPage(e.target.value); setError(""); }}
-                  disabled={isRunning}
-                  className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                />
+          {/* Page range inputs — only shown for documents, not standalone notes */}
+          {activeMeta && (
+            <div className="space-y-2">
+              <label className="text-xs font-medium">
+                Extract {pageLabel}s
+              </label>
+              <div className="flex items-center gap-2">
+                <div className="flex-1">
+                  <span className="text-xs text-muted-foreground block mb-1">From</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={totalPages || 9999}
+                    value={fromPage}
+                    onChange={(e) => { setFromPage(e.target.value); setError(""); }}
+                    disabled={isRunning}
+                    className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                  />
+                </div>
+                <span className="text-muted-foreground mt-5">→</span>
+                <div className="flex-1">
+                  <span className="text-xs text-muted-foreground block mb-1">To</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={totalPages || 9999}
+                    value={toPage}
+                    onChange={(e) => { setToPage(e.target.value); setError(""); }}
+                    disabled={isRunning}
+                    className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                  />
+                </div>
+                {totalPages > 0 && (
+                  <span className="text-xs text-muted-foreground mt-5 shrink-0">
+                    / {totalPages}
+                  </span>
+                )}
               </div>
-              <span className="text-muted-foreground mt-5">→</span>
-              <div className="flex-1">
-                <span className="text-xs text-muted-foreground block mb-1">To</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={totalPages || 9999}
-                  value={toPage}
-                  onChange={(e) => { setToPage(e.target.value); setError(""); }}
-                  disabled={isRunning}
-                  className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                />
-              </div>
-              {totalPages > 0 && (
-                <span className="text-xs text-muted-foreground mt-5 shrink-0">
-                  / {totalPages}
-                </span>
-              )}
             </div>
-          </div>
+          )}
+          {!activeMeta && (
+            <p className="text-xs text-muted-foreground bg-muted/50 rounded-lg px-3 py-2">
+              Generating smart notes from your class note content.
+            </p>
+          )}
 
           {/* Optional focus hint */}
           <div className="space-y-1">

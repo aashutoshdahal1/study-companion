@@ -133,6 +133,38 @@ app.get('/health', (req, res) => {
   res.status(200).send('{"status":"healthy"}');
 });
 
+app.get('/deepai-ping', async (req, res) => {
+  setCors(res, 'application/json');
+  try {
+    const r = await fetch('http://localhost:8789/ping', { signal: AbortSignal.timeout(1000) });
+    res.status(r.ok ? 200 : 502).send(r.ok ? '{"status":"ok"}' : '{"status":"offline"}');
+  } catch {
+    res.status(502).send('{"status":"offline"}');
+  }
+});
+
+app.post('/deepai-api', express.urlencoded({ extended: true, limit: '10mb' }), async (req, res) => {
+  setCors(res, 'text/plain');
+  try {
+    const upstream = await fetch('http://localhost:8789/api', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(req.body).toString(),
+    });
+    res.status(upstream.status);
+    res.setHeader('Content-Type', upstream.headers.get('content-type') || 'text/plain');
+    const reader = upstream.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      res.write(Buffer.from(value));
+    }
+    res.end();
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
 app.get('/', (req, res) => res.sendFile(htmlPath));
 app.get('/index.html', (req, res) => res.sendFile(htmlPath));
 
@@ -145,6 +177,15 @@ app.post('/', express.raw({ type: 'application/json', limit: '10mb' }), async (r
     ? `https://chat.z.ai/api/v2/chat/completions?${query}`
     : 'https://chat.z.ai/api/v2/chat/completions';
 
+  // Forward any x-* headers the client sent (x-signature, x-fe-version, etc.)
+  const extraHeaders = {};
+  for (const [k, v] of Object.entries(req.headers)) {
+    if (k.startsWith('x-') && k !== 'x-token' && k !== 'x-cookie') {
+      extraHeaders[k] = v;
+    }
+  }
+  const userAgent = req.get('X-UA') || 'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Mobile Safari/537.36';
+
   try {
     const upstream = await fetch(target, {
       method: 'POST',
@@ -153,12 +194,13 @@ app.post('/', express.raw({ type: 'application/json', limit: '10mb' }), async (r
         Authorization: `Bearer ${token}`,
         Origin: 'https://chat.z.ai',
         Referer: 'https://chat.z.ai/',
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36',
+        'User-Agent': userAgent,
         Accept: '*/*',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'x-fe-version': 'prod-fe-1.1.21',
+        'Accept-Language': 'en-US',
+        'x-fe-version': 'prod-fe-1.1.34',
         'x-region': 'overseas',
         Cookie: cookie,
+        ...extraHeaders,
       },
       body: req.body,
     });
@@ -271,13 +313,26 @@ app.all('/api/audioconvert/*', express.raw({ type: '*/*', limit: '10mb' }), asyn
   }
 });
 
-app.listen(PORT, '0.0.0.0', () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`✓ Server running at http://localhost:${PORT}/`);
   console.log(`  TTS: http://localhost:${PORT}/api/voices`);
   console.log('  Press Ctrl+C to stop\n');
+});
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`Port ${PORT} already in use. Kill the existing process first:\n  kill $(lsof -t -i:${PORT})`);
+  } else {
+    console.error('Server error:', err.message);
+  }
+  process.exit(1);
 });
 
 // Start MongoDB API server as a child process
 const mongo = spawn('node', ['mongodb-setup.js'], { stdio: 'inherit' });
 mongo.on('error', (err) => console.error('Failed to start MongoDB server:', err));
 mongo.on('exit', (code) => { if (code !== 0) console.error(`MongoDB server exited with code ${code}`); });
+
+// Start DeepAI proxy server as a child process
+const deepai = spawn('node', ['deepai-server.js'], { stdio: 'inherit' });
+deepai.on('error', (err) => console.error('Failed to start DeepAI server:', err));
+deepai.on('exit', (code) => { if (code !== 0) console.error(`DeepAI server exited with code ${code}`); });

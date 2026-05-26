@@ -270,22 +270,20 @@ export function PodcastPlayer({ isOpen, onClose, activeMeta, notesHtml }: Podcas
   if (!isOpen) return null;
 
   return (
-    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 w-[540px] bg-background border border-border rounded-2xl shadow-2xl overflow-hidden">
+    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 w-[calc(100vw-2rem)] max-w-[540px] bg-background border border-border rounded-2xl shadow-2xl overflow-hidden">
       {/* Header */}
-      <div className="bg-gradient-to-r from-primary/20 to-primary/5 px-5 py-3 flex items-center justify-between border-b border-border">
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-full bg-primary/20 flex items-center justify-center">
-            <Mic className="h-3.5 w-3.5 text-primary" />
-          </div>
-          <div>
-            <p className="text-sm font-semibold leading-none">Podcast Mode</p>
-            {activeMeta && (
-              <p className="text-xs text-muted-foreground mt-0.5 truncate max-w-[280px]">{activeMeta.name}</p>
-            )}
-          </div>
+      <div className="bg-gradient-to-r from-primary/20 to-primary/5 px-4 py-3 flex items-center gap-2 border-b border-border min-w-0">
+        <div className="w-7 h-7 rounded-full bg-primary/20 flex items-center justify-center shrink-0">
+          <Mic className="h-3.5 w-3.5 text-primary" />
         </div>
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <span>{wordCount} words · ~{estimatedMins} min</span>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold leading-none">Podcast Mode</p>
+          {activeMeta && (
+            <p className="text-xs text-muted-foreground mt-0.5 truncate">{activeMeta.name}</p>
+          )}
+        </div>
+        <div className="flex items-center gap-2 text-xs text-muted-foreground shrink-0">
+          <span className="hidden sm:inline">{wordCount} words · ~{estimatedMins} min</span>
           <div
             className={`w-2 h-2 rounded-full ${
               serverOnline === true ? "bg-green-500" : serverOnline === false ? "bg-red-500" : "bg-yellow-500"

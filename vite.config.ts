@@ -11,6 +11,13 @@ export default defineConfig(({ mode }) => ({
     hmr: {
       overlay: false,
     },
+    proxy: {
+      '/proxy': {
+        target: 'http://localhost:8788',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/proxy/, ''),
+      },
+    },
   },
   plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
   resolve: {

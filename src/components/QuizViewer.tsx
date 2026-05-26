@@ -49,58 +49,20 @@ Example:
 Study material:
 ${text.slice(0, 3000)}`;
 
-async function callZaiProxy(text: string, token: string, signal: AbortSignal): Promise<string> {
-  const payload = {
-    stream: true,
-    model: "GLM-5-Turbo",
-    messages: [{ role: "user", content: QUIZ_PROMPT(text) }],
-    chat_id: crypto.randomUUID(),
-    current_user_message_id: crypto.randomUUID(),
-    current_user_message_parent_id: null,
-    extra: {},
-    params: {},
-    features: { image_generation: false, web_search: false, auto_web_search: false, preview_mode: true, flags: [] },
-    background_tasks: { title_generation: false, tags_generation: false },
-    variables: {},
-  };
+async function callGroq(prompt: string, signal: AbortSignal): Promise<string> {
+  const apiKey = localStorage.getItem("groq-api-key") || "";
+  const model = localStorage.getItem("groq-model") || "llama-3.3-70b-versatile";
+  if (!apiKey) throw new Error("Groq API key not configured. Add your key in Chat Settings.");
 
-  const response = await fetch(`http://localhost:8788?timestamp=${Date.now()}`, {
+  const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-Token": token },
-    body: JSON.stringify(payload),
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({ model, messages: [{ role: "user", content: prompt }], temperature: 0.4 }),
     signal,
   });
-  if (!response.ok) throw new Error(`Z.ai HTTP ${response.status}`);
-
-  const reader = response.body?.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let result = "";
-
-  const processLine = (line: string) => {
-    if (!line.startsWith("data: ")) return;
-    const raw = line.slice(6).trim();
-    if (!raw || raw === "[DONE]") return;
-    try {
-      const evt = JSON.parse(raw);
-      const d = evt.data;
-      if (!d) return;
-      const chunk = d.delta_content || d.edit_content;
-      if (chunk && (d.phase === "answer" || d.phase === "other")) result += chunk;
-    } catch {}
-  };
-
-  if (reader) {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) { if (buffer.trim()) processLine(buffer.trim()); break; }
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-      for (const line of lines) processLine(line);
-    }
-  }
-  return result;
+  if (!response.ok) throw new Error(`Groq HTTP ${response.status}`);
+  const json = await response.json();
+  return json.choices?.[0]?.message?.content ?? "";
 }
 
 export function QuizViewer({ isOpen, onClose, notesHtml, pageText, currentPage }: QuizViewerProps) {
@@ -138,20 +100,7 @@ export function QuizViewer({ isOpen, onClose, notesHtml, pageText, currentPage }
     const abort = new AbortController();
 
     try {
-      const token = localStorage.getItem("zai-glm-bearer-token") || "";
-      let responseText = "";
-
-      if (token) {
-        try { 
-          responseText = await callZaiProxy(rawText, token, abort.signal); 
-        } catch (error) {
-          console.error("Quiz - Z.ai proxy error:", error);
-        }
-      }
-
-      if (!responseText) {
-        throw new Error("Z.ai token not configured. Please add your Z.ai token in chat settings.");
-      }
+      const responseText = await callGroq(QUIZ_PROMPT(rawText), abort.signal);
 
       const parsed = parseQuestions(responseText);
       if (parsed.length === 0) {

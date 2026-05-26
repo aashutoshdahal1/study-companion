@@ -49,6 +49,8 @@ let workspaces;
 let documents;
 let notes;
 let blobs;
+let standaloneNotes;
+let flashcards;
 
 async function connectToMongoDB() {
   try {
@@ -60,11 +62,15 @@ async function connectToMongoDB() {
     documents = db.collection('documents');
     notes = db.collection('notes');
     blobs = db.collection('blobs');
+    standaloneNotes = db.collection('standaloneNotes');
+    flashcards = db.collection('flashcards');
 
     await workspaces.createIndex({ id: 1 }, { unique: true });
     await documents.createIndex({ id: 1 }, { unique: true });
     await notes.createIndex({ docId: 1 }, { unique: true });
     await blobs.createIndex({ id: 1 }, { unique: true });
+    await standaloneNotes.createIndex({ id: 1 }, { unique: true });
+    await flashcards.createIndex({ docId: 1 }, { unique: true });
 
     console.log('MongoDB collections and indexes created');
   } catch (error) {
@@ -227,6 +233,75 @@ app.get('/api/sync/restore', async (req, res) => {
       notes.find({}).toArray()
     ]);
     res.json({ workspaces: workspacesData, documents: documentsData, notes: notesData });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── Standalone Notes ─────────────────────────────────────────────────────────
+app.get('/api/standalone-notes', async (req, res) => {
+  try {
+    const all = await standaloneNotes.find({}, { projection: { _id: 0, html: 0 } }).toArray();
+    res.json(all);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/standalone-notes/:id', async (req, res) => {
+  try {
+    const note = await standaloneNotes.findOne({ id: req.params.id });
+    if (!note) return res.status(404).json({ error: 'Not found' });
+    res.json(strip(note));
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/standalone-notes', async (req, res) => {
+  try {
+    const note = req.body;
+    await standaloneNotes.replaceOne({ id: note.id }, note, { upsert: true });
+    res.json(strip(note));
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/standalone-notes/:id', async (req, res) => {
+  try {
+    await standaloneNotes.deleteOne({ id: req.params.id });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── Flashcard Decks ───────────────────────────────────────────────────────────
+app.get('/api/flashcards/:docId', async (req, res) => {
+  try {
+    const result = await flashcards.findOne({ docId: req.params.docId });
+    if (!result) return res.status(404).json({ error: 'Not found' });
+    res.json(strip(result));
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/flashcards', async (req, res) => {
+  try {
+    const deck = strip(req.body);
+    await flashcards.replaceOne({ docId: deck.docId }, deck, { upsert: true });
+    res.json(deck);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/flashcards/:docId', async (req, res) => {
+  try {
+    await flashcards.deleteOne({ docId: req.params.docId });
+    res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
